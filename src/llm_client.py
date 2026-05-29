@@ -10,14 +10,16 @@ class LLMClient:
         self.model = model
         self.timeout = timeout
 
-    def chat(self, messages):
+    def chat(self, messages, tools=None):
         url = f"{self.base_url}/chat/completions"
-        payload = json.dumps(
-            {
-                "model": self.model,
-                "messages": messages,
-            }
-        ).encode("utf-8")
+        payload_data = {
+            "model": self.model,
+            "messages": messages,
+        }
+        if tools:
+            payload_data["tools"] = tools
+
+        payload = json.dumps(payload_data).encode("utf-8")
 
         request = urllib.request.Request(
             url,
@@ -40,6 +42,6 @@ class LLMClient:
 
         try:
             data = json.loads(response_body)
-            return data["choices"][0]["message"]["content"]
+            return data["choices"][0]["message"]
         except (KeyError, IndexError, TypeError, json.JSONDecodeError) as exc:
             raise RuntimeError(f"Unexpected response: {response_body}") from exc
