@@ -29,7 +29,7 @@ In PowerShell, Windows requires the current-directory prefix:
 You can still run directly with command line config:
 
 ```powershell
-python .\src\cli_assistant.py --base-url https://api.openai.com/v1 --api-key sk-... --model gpt-4.1-mini
+python .\src\wdcode\cli\main.py --base-url https://api.openai.com/v1 --api-key sk-... --model gpt-4.1-mini
 ```
 
 Or use environment variables:
@@ -38,13 +38,13 @@ Or use environment variables:
 $env:OPENAI_BASE_URL="https://api.openai.com/v1"
 $env:OPENAI_API_KEY="sk-..."
 $env:OPENAI_MODEL="gpt-4.1-mini"
-python .\src\cli_assistant.py
+python .\src\wdcode\cli\main.py
 ```
 
 Save config back to `model_config.json`:
 
 ```powershell
-python .\src\cli_assistant.py --base-url https://api.openai.com/v1 --api-key sk-... --model gpt-4.1-mini --save-config
+python .\src\wdcode\cli\main.py --base-url https://api.openai.com/v1 --api-key sk-... --model gpt-4.1-mini --save-config
 ```
 
 Inside the CLI, type `/exit` or `/quit` to stop.

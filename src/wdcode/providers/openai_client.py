@@ -3,7 +3,7 @@ import urllib.error
 import urllib.request
 
 
-class LLMClient:
+class OpenAIClient:
     def __init__(self, base_url, api_key, model, timeout=120):
         self.base_url = base_url.rstrip("/")
         self.api_key = api_key

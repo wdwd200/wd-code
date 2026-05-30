@@ -4,7 +4,7 @@ from pathlib import Path
 
 
 DEFAULT_BASE_URL = "https://api.openai.com/v1"
-DEFAULT_CONFIG_PATH = Path(__file__).resolve().parent.parent / "model_config.json"
+DEFAULT_CONFIG_PATH = Path(__file__).resolve().parents[3] / "model_config.json"
 
 
 def load_config(path):
