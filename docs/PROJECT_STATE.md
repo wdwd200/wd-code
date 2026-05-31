@@ -6,7 +6,7 @@ Phase 2：安全和可回放
 
 ## Last Reviewed Source
 
-AGENTS.md 标注的基准 commit：`1b2ac5f`；本轮以当前工作区可见状态为准。
+AGENTS.md 标注的基准 commit：`dec6159`；本轮以当前工作区可见状态为准。
 
 ## Completed
 
@@ -23,14 +23,14 @@ AGENTS.md 标注的基准 commit：`1b2ac5f`；本轮以当前工作区可见状
 - `TraceWriter` 最小 JSONL 记录能力已实现并有测试，能够记录 tool loop 关键事件并对敏感字段做基础脱敏。
 - 最小 approval / dry-run 执行保护已落地：`ToolExecutor` 支持 `approval_mode`，dry-run 下读工具允许执行，写文件、编辑文件和运行命令会被统一 `ToolResult` 拦截。
 - 最小 git diff rollback 能力已落地：可以捕获 tracked diff 和新增 untracked 普通文件，并用反向 patch 与保守文件删除恢复快照内变更。
+- 最小 validation runner 已落地：集中执行 command policy 允许的验证命令，并返回结构化 `ValidationReport`。
 
 ## In Progress
 
-- Phase 2 下一步候选：validation runner。
+- Phase 2 下一步候选：Phase 2 收尾加固或进入 Phase 3 repo map。
 
 ## Not Started
 
-- validation runner
 - repo map
 - eval task skeleton
 
