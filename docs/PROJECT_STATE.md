@@ -6,7 +6,7 @@ Phase 1：基础 Agent Runtime
 
 ## Last Reviewed Source
 
-GitHub default branch main，未提供 commit hash，本轮以当前可见状态为准。
+AGENTS.md 标注的基准 commit：`2fee331`；本轮以当前工作区可见状态为准。
 
 ## Completed
 
@@ -19,10 +19,11 @@ GitHub default branch main，未提供 commit hash，本轮以当前可见状态
 - `run_command` 和 `command_policy` 已实现为保守 allowlist 版本。
 - `ToolExecutor` 已抽离为工具执行入口，当前保持工具返回结构不变。
 - `ToolResult` 已提供最小统一结果结构，ToolExecutor 现在返回 ToolResult。
+- FakeModelClient 风格的无 API key 测试已覆盖 agent/tool loop 核心闭环：普通 assistant 回复、tool_call 成功路径、tool_call 参数失败路径。
 
 ## In Progress
 
-- Phase 1 下一步候选：FakeModelClient agent loop 测试。
+- Phase 1 下一步候选：trace writer，或进入 Phase 2 前的最小 agent loop 整理。
 
 ## Not Started
 
