@@ -1,4 +1,5 @@
 import json
+import subprocess
 from contextlib import contextmanager
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -168,3 +169,30 @@ def test_validation_runner_writes_trace_events(monkeypatch):
     ]
     assert events[0]["payload"]["commands"] == ["python -m pytest tests/test_imports.py"]
     assert events[-1]["payload"]["ok"] is True
+
+
+def test_validation_runner_timeout_returns_structured_failure(monkeypatch):
+    project_root = Path(__file__).resolve().parents[1]
+
+    def fake_run(argv, **kwargs):
+        raise subprocess.TimeoutExpired(
+            cmd=argv,
+            timeout=kwargs["timeout"],
+            output=b"partial output",
+            stderr=b"timed out",
+        )
+
+    monkeypatch.setattr("wdcode.validation.runner.subprocess.run", fake_run)
+
+    report = run_validation(
+        project_root,
+        commands=["python -m pytest tests/test_imports.py"],
+        timeout=1,
+    )
+
+    assert report.ok is False
+    assert report.results[0].ok is False
+    assert report.results[0].exit_code is None
+    assert report.results[0].stdout == "partial output"
+    assert report.results[0].stderr == "timed out"
+    assert "timed out" in report.results[0].error

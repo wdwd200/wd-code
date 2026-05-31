@@ -6,7 +6,7 @@ Phase 2：安全和可回放
 
 ## Last Reviewed Source
 
-AGENTS.md 标注的基准 commit：`dec6159`；本轮以当前工作区可见状态为准。
+AGENTS.md 标注的基准 commit：`2b601e6`；本轮以当前工作区可见状态为准。
 
 ## Completed
 
@@ -27,7 +27,7 @@ AGENTS.md 标注的基准 commit：`dec6159`；本轮以当前工作区可见状
 
 ## In Progress
 
-- Phase 2 下一步候选：Phase 2 收尾加固或进入 Phase 3 repo map。
+- Phase 2 收尾检查；下一轮候选 Phase 3 repo map。
 
 ## Not Started
 

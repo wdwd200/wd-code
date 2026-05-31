@@ -93,8 +93,8 @@ def _run_validation_command(project_root: Path, command: str, timeout: int) -> V
             command=command,
             ok=False,
             exit_code=None,
-            stdout=exc.stdout or "",
-            stderr=exc.stderr or "",
+            stdout=_normalize_output(exc.stdout),
+            stderr=_normalize_output(exc.stderr),
             duration_ms=elapsed_ms(start),
             error=f"Command timed out after {timeout} seconds.",
         )
@@ -116,6 +116,14 @@ def _failure(command: str, duration_ms: int, error: str) -> ValidationCommandRes
 
 def elapsed_ms(start):
     return int((time.monotonic() - start) * 1000)
+
+
+def _normalize_output(output):
+    if output is None:
+        return ""
+    if isinstance(output, bytes):
+        return output.decode("utf-8", errors="replace")
+    return str(output)
 
 
 def _write_trace(trace_writer, event_type, payload):
