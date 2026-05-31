@@ -2,11 +2,11 @@
 
 ## Current Phase
 
-Phase 1：基础 Agent Runtime
+Phase 2：安全和可回放
 
 ## Last Reviewed Source
 
-AGENTS.md 标注的基准 commit：`2fee331`；本轮以当前工作区可见状态为准。
+AGENTS.md 标注的基准 commit：`f06af55`；本轮以当前工作区可见状态为准。
 
 ## Completed
 
@@ -20,14 +20,14 @@ AGENTS.md 标注的基准 commit：`2fee331`；本轮以当前工作区可见状
 - `ToolExecutor` 已抽离为工具执行入口，当前保持工具返回结构不变。
 - `ToolResult` 已提供最小统一结果结构，ToolExecutor 现在返回 ToolResult。
 - FakeModelClient 风格的无 API key 测试已覆盖 agent/tool loop 核心闭环：普通 assistant 回复、tool_call 成功路径、tool_call 参数失败路径。
+- `TraceWriter` 最小 JSONL 记录能力已实现并有测试，能够记录 tool loop 关键事件并对敏感字段做基础脱敏。
 
 ## In Progress
 
-- Phase 1 下一步候选：trace writer，或进入 Phase 2 前的最小 agent loop 整理。
+- Phase 2 下一步候选：approval / dry-run 或 git diff rollback。
 
 ## Not Started
 
-- trace writer
 - approval / dry-run
 - validation runner
 - repo map
