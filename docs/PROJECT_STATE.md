@@ -2,7 +2,7 @@
 
 ## Current Phase
 
-Phase 0：架构清理与基线
+Phase 1：基础 Agent Runtime
 
 ## Last Reviewed Source
 
@@ -15,17 +15,15 @@ GitHub default branch main，未提供 commit hash，本轮以当前可见状态
 - 已有 CLI、core、infra、providers、security、tools 等基础目录。
 - 已有文件工具和搜索工具的注册入口。
 - 已有路径安全相关模块。
-- `run_command` 和 `command_policy` 目前仍是占位。
+- 无 API key 测试基线已存在。
+- `run_command` 和 `command_policy` 已实现为保守 allowlist 版本。
 
 ## In Progress
 
-- 建立无 API key 测试基线。
-- 建立项目状态记录文件。
+- Phase 1 后续 runtime 设计整理。
 
 ## Not Started
 
-- 真正的 `run_command`
-- command policy
 - ToolExecutor
 - 统一 ToolResult
 - trace writer

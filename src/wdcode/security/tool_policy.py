@@ -11,7 +11,7 @@ from wdcode.security.paths import (
 )
 
 
-ALLOWED_TOOL_NAMES = {"list_files", "read_file", "search_files", "write_file", "edit_file"}
+ALLOWED_TOOL_NAMES = {"list_files", "read_file", "search_files", "write_file", "edit_file", "run_command"}
 READ_TOOLS = {"list_files", "read_file", "search_files"}
 
 
@@ -97,6 +97,25 @@ def normalize_arguments(tool_name, arguments, project_root):
         check_file_size(target, MAX_FILE_BYTES)
         normalized["old_text"] = old_text
         normalized["new_text"] = new_text
+
+    if tool_name == "run_command":
+        command = require_string(arguments, "command")
+        cwd = arguments.get("cwd", ".")
+        if not isinstance(cwd, str):
+            raise ValueError("cwd must be a string.")
+        resolved = resolve_project_path(project_root, cwd)
+        if not resolved.exists():
+            raise ValueError("cwd does not exist.")
+        if not resolved.is_dir():
+            raise ValueError("cwd must be a directory.")
+        timeout = arguments.get("timeout", 30)
+        if not isinstance(timeout, (int, float)) or isinstance(timeout, bool):
+            raise ValueError("timeout must be a number.")
+        if timeout <= 0:
+            raise ValueError("timeout must be greater than zero.")
+        normalized["command"] = command
+        normalized["cwd"] = str(resolved.relative_to(project_root)) if resolved != project_root else "."
+        normalized["timeout"] = min(float(timeout), 120.0)
 
     return normalized
 

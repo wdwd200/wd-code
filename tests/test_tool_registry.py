@@ -13,4 +13,4 @@ def test_default_registry_contains_current_file_tools():
     assert "write_file" in tool_names
     assert "edit_file" in tool_names
     assert "search_files" in tool_names
-    assert "run_command" not in tool_names
+    assert "run_command" in tool_names
