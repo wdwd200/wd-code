@@ -6,7 +6,7 @@ Phase 2：安全和可回放
 
 ## Last Reviewed Source
 
-AGENTS.md 标注的基准 commit：`30f67ef`；本轮以当前工作区可见状态为准。
+AGENTS.md 标注的基准 commit：`1b2ac5f`；本轮以当前工作区可见状态为准。
 
 ## Completed
 
@@ -22,10 +22,11 @@ AGENTS.md 标注的基准 commit：`30f67ef`；本轮以当前工作区可见状
 - FakeModelClient 风格的无 API key 测试已覆盖 agent/tool loop 核心闭环：普通 assistant 回复、tool_call 成功路径、tool_call 参数失败路径。
 - `TraceWriter` 最小 JSONL 记录能力已实现并有测试，能够记录 tool loop 关键事件并对敏感字段做基础脱敏。
 - 最小 approval / dry-run 执行保护已落地：`ToolExecutor` 支持 `approval_mode`，dry-run 下读工具允许执行，写文件、编辑文件和运行命令会被统一 `ToolResult` 拦截。
+- 最小 git diff rollback 能力已落地：可以捕获 tracked diff 和新增 untracked 普通文件，并用反向 patch 与保守文件删除恢复快照内变更。
 
 ## In Progress
 
-- Phase 2 下一步候选：git diff rollback 或 validation runner。
+- Phase 2 下一步候选：validation runner。
 
 ## Not Started
 
