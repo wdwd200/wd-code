@@ -2,6 +2,7 @@ import json
 
 from wdcode.core.tool_calls import get_tool_name, parse_tool_arguments, validate_tool_call
 from wdcode.tools.executor import ToolExecutor
+from wdcode.tools.result import ToolResult
 
 
 MAX_TOOL_ROUNDS = 5
@@ -54,10 +55,10 @@ def handle_assistant_message(conversation, assistant_message, tool_executor):
 def execute_tool_call(tool_executor, tool_call):
     validation_error = validate_tool_call(tool_call)
     if validation_error:
-        return {"error": validation_error}
+        return ToolResult.failure(validation_error).to_dict()
 
     arguments = parse_tool_arguments(tool_call)
     if isinstance(arguments, dict) and "error" in arguments:
-        return arguments
+        return ToolResult.failure(arguments["error"]).to_dict()
 
-    return tool_executor.execute(get_tool_name(tool_call), arguments)
+    return tool_executor.execute(get_tool_name(tool_call), arguments).to_dict()

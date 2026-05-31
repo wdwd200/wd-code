@@ -18,15 +18,14 @@ GitHub default branch main，未提供 commit hash，本轮以当前可见状态
 - 无 API key 测试基线已存在。
 - `run_command` 和 `command_policy` 已实现为保守 allowlist 版本。
 - `ToolExecutor` 已抽离为工具执行入口，当前保持工具返回结构不变。
+- `ToolResult` 已提供最小统一结果结构，ToolExecutor 现在返回 ToolResult。
 
 ## In Progress
 
-- Phase 1 下一步候选：统一 ToolResult 设计。
 - Phase 1 下一步候选：FakeModelClient agent loop 测试。
 
 ## Not Started
 
-- 统一 ToolResult
 - trace writer
 - approval / dry-run
 - validation runner
