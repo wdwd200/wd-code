@@ -10,9 +10,16 @@ MAX_TOOL_CALLS_PER_ROUND = 4
 MAX_TOOL_CALLS_PER_REQUEST = 12
 
 
-def run_tool_loop(client, conversation, tool_registry, max_rounds=MAX_TOOL_ROUNDS, trace_writer=None):
+def run_tool_loop(
+    client,
+    conversation,
+    tool_registry,
+    max_rounds=MAX_TOOL_ROUNDS,
+    trace_writer=None,
+    approval_mode="auto",
+):
     tools = tool_registry.schemas() if tool_registry else None
-    tool_executor = ToolExecutor(tool_registry) if tool_registry else None
+    tool_executor = ToolExecutor(tool_registry, approval_mode=approval_mode) if tool_registry else None
     tool_call_count = 0
     for _ in range(max_rounds):
         assistant_message = client.chat(conversation.as_messages(), tools=tools)
