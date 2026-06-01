@@ -1,7 +1,6 @@
 from pathlib import Path
 
-from wdcode.core.tool_calls import get_tool_name, parse_tool_arguments, validate_tool_call
-from wdcode.tools.executor import ToolExecutor
+from wdcode.security.tool_guard import prepare_tool_request
 from wdcode.tools.result import ToolResult
 
 
@@ -10,23 +9,36 @@ class ToolGateway:
         self.registry = registry
         self.project_root = Path(project_root or registry.project_root).resolve()
         self.approval_mode = approval_mode
-        self.executor = ToolExecutor(registry, approval_mode=approval_mode)
 
     def schemas(self):
         return self.registry.schemas()
 
     def handle(self, tool_call):
-        validation_error = validate_tool_call(tool_call)
-        tool_name = _safe_tool_name(tool_call)
-        if validation_error:
-            return self._failure(validation_error, tool_name=tool_name, stage="validation")
+        request = prepare_tool_request(
+            tool_call=tool_call,
+            registry=self.registry,
+            project_root=self.project_root,
+            approval_mode=self.approval_mode,
+        )
+        if not request.allowed:
+            return self._failure(
+                request.reason,
+                tool_name=request.tool_name,
+                stage=request.stage,
+                dry_run=request.dry_run,
+            )
 
-        arguments = parse_tool_arguments(tool_call)
-        if isinstance(arguments, dict) and "error" in arguments:
-            return self._failure(arguments["error"], tool_name=tool_name, stage="parse")
-
-        result = self.executor.execute(get_tool_name(tool_call), arguments)
-        return self._with_gateway_metadata(result, tool_name=get_tool_name(tool_call))
+        try:
+            data = request.tool.execute(request.arguments)
+            return ToolResult.success(
+                data,
+                tool_name=request.tool_name,
+                stage="execution",
+                dry_run=False,
+                approval_mode=self.approval_mode,
+            )
+        except Exception as exc:
+            return self._failure(str(exc), tool_name=request.tool_name, stage="execution")
 
     def _failure(self, error, tool_name="", stage="execution", dry_run=False):
         return ToolResult.failure(
@@ -36,36 +48,3 @@ class ToolGateway:
             dry_run=dry_run,
             approval_mode=self.approval_mode,
         )
-
-    def _with_gateway_metadata(self, result, tool_name):
-        metadata = {
-            "tool_name": tool_name,
-            "stage": _result_stage(result),
-            "dry_run": False,
-            "approval_mode": self.approval_mode,
-        }
-        metadata.update(result.metadata)
-        return ToolResult(
-            ok=result.ok,
-            data=result.data,
-            error=result.error,
-            metadata=metadata,
-        )
-
-
-def _safe_tool_name(tool_call):
-    if not isinstance(tool_call, dict):
-        return ""
-    function = tool_call.get("function")
-    if not isinstance(function, dict):
-        return ""
-    name = function.get("name")
-    return name if isinstance(name, str) else ""
-
-
-def _result_stage(result):
-    if result.metadata.get("dry_run") or result.metadata.get("approval_mode") == "require_approval":
-        return "approval"
-    if result.ok:
-        return "execution"
-    return "execution"
