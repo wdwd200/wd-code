@@ -2,6 +2,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
+from wdcode.tools.base import Tool
 from wdcode.tools import create_default_registry
 from wdcode.tools.executor import ToolExecutor
 
@@ -20,11 +21,23 @@ def project_temp_dir():
 
 
 class RecordingRegistry:
-    def __init__(self):
+    def __init__(self, project_root, tool_name):
+        self.project_root = project_root
         self.calls = []
+        self.tool = Tool(
+            name=tool_name,
+            description="Recording tool.",
+            parameters={"type": "object"},
+            execute=self.execute_tool,
+        )
 
-    def execute(self, name, arguments):
-        self.calls.append((name, arguments))
+    def get(self, name):
+        if name == self.tool.name:
+            return self.tool
+        return None
+
+    def execute_tool(self, arguments):
+        self.calls.append((self.tool.name, arguments))
         return {"executed": True}
 
 
@@ -83,7 +96,8 @@ def test_tool_executor_dry_run_edit_file_does_not_modify_file():
 
 
 def test_tool_executor_dry_run_run_command_does_not_call_registry():
-    registry = RecordingRegistry()
+    project_root = Path(__file__).resolve().parents[1]
+    registry = RecordingRegistry(project_root, "run_command")
     executor = ToolExecutor(registry, approval_mode="dry_run")
 
     result = executor.execute("run_command", {"command": "python -m compileall tests"})
@@ -96,7 +110,8 @@ def test_tool_executor_dry_run_run_command_does_not_call_registry():
 
 
 def test_tool_executor_require_approval_does_not_call_registry_for_mutating_tool():
-    registry = RecordingRegistry()
+    project_root = Path(__file__).resolve().parents[1]
+    registry = RecordingRegistry(project_root, "write_file")
     executor = ToolExecutor(registry, approval_mode="require_approval")
 
     result = executor.execute("write_file", {"path": "example.txt", "content": "data"})

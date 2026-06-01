@@ -14,3 +14,10 @@ def test_default_registry_contains_current_file_tools():
     assert "edit_file" in tool_names
     assert "search_files" in tool_names
     assert "run_command" in tool_names
+
+
+def test_registry_does_not_execute_tools_directly():
+    project_root = Path(__file__).resolve().parents[1]
+    registry = create_default_registry(project_root)
+
+    assert not hasattr(registry, "execute")

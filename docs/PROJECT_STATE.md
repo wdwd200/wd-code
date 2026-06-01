@@ -26,10 +26,11 @@ AGENTS.md 标注的基准 commit：`2b601e6`；当前工作分支为 `phase-2.5-
 - 最小 validation runner 已落地：集中执行 command policy 允许的验证命令，并返回结构化 `ValidationReport`。
 - Phase 2.5 已新增 `ToolGateway`，当前 `tool_loop` 已通过网关处理工具调用。
 - Phase 2.5 已新增 `tool_guard`，提供工具调用级校验和准备请求的集中入口。
+- `ToolRegistry` 已收窄为工具目录职责，只保留注册、查找、列表和 schema 输出；兼容的 `ToolExecutor` 现在转入 `ToolGateway`。
 
 ## In Progress
 
-- Phase 2.5 工具层整理：下一步候选是简化 `ToolRegistry` 职责。
+- Phase 2.5 工具层整理：下一步候选是把工具循环合并进 `agent_loop.run_agent_turn`。
 
 ## Not Started
 
