@@ -1,7 +1,7 @@
 import json
 
 from wdcode.core.tool_calls import get_tool_name, parse_tool_arguments, validate_tool_call
-from wdcode.tools.executor import ToolExecutor
+from wdcode.tools.gateway import ToolGateway
 from wdcode.tools.result import ToolResult
 
 
@@ -18,8 +18,8 @@ def run_tool_loop(
     trace_writer=None,
     approval_mode="auto",
 ):
-    tools = tool_registry.schemas() if tool_registry else None
-    tool_executor = ToolExecutor(tool_registry, approval_mode=approval_mode) if tool_registry else None
+    tool_gateway = ToolGateway(tool_registry, approval_mode=approval_mode) if tool_registry else None
+    tools = tool_gateway.schemas() if tool_gateway else None
     tool_call_count = 0
     for _ in range(max_rounds):
         assistant_message = client.chat(conversation.as_messages(), tools=tools)
@@ -34,7 +34,7 @@ def run_tool_loop(
         content, calls_executed = handle_assistant_message(
             conversation,
             assistant_message,
-            tool_executor,
+            tool_gateway,
             trace_writer=trace_writer,
         )
         if content is not None:
@@ -50,14 +50,14 @@ def run_tool_loop(
     return message
 
 
-def handle_assistant_message(conversation, assistant_message, tool_executor, trace_writer=None):
+def handle_assistant_message(conversation, assistant_message, tool_gateway, trace_writer=None):
     tool_calls = assistant_message.get("tool_calls") or []
     if not tool_calls:
         content = assistant_message.get("content") or ""
         conversation.add_assistant_message(content)
         return content, 0
 
-    if tool_executor is None:
+    if tool_gateway is None:
         raise RuntimeError("Model requested tools, but no tool registry is available.")
     if len(tool_calls) > MAX_TOOL_CALLS_PER_ROUND:
         raise RuntimeError("Too many tool calls in one model response.")
@@ -74,7 +74,7 @@ def handle_assistant_message(conversation, assistant_message, tool_executor, tra
                 "arguments": _trace_tool_arguments(tool_call),
             },
         )
-        tool_result = execute_tool_call(tool_executor, tool_call)
+        tool_result = execute_tool_call(tool_gateway, tool_call)
         conversation.add_tool_result(
             tool_call_id=tool_call.get("id"),
             name=tool_name,
@@ -93,7 +93,10 @@ def handle_assistant_message(conversation, assistant_message, tool_executor, tra
     return None, len(tool_calls)
 
 
-def   execute_tool_call(tool_executor, tool_call):
+def execute_tool_call(tool_handler, tool_call):
+    if hasattr(tool_handler, "handle"):
+        return tool_handler.handle(tool_call).to_dict()
+
     validation_error = validate_tool_call(tool_call)
     if validation_error:
         return ToolResult.failure(validation_error).to_dict()
@@ -102,7 +105,7 @@ def   execute_tool_call(tool_executor, tool_call):
     if isinstance(arguments, dict) and "error" in arguments:
         return ToolResult.failure(arguments["error"]).to_dict()
 
-    return tool_executor.execute(get_tool_name(tool_call), arguments).to_dict()
+    return tool_handler.execute(get_tool_name(tool_call), arguments).to_dict()
 
 
 def _write_trace(trace_writer, event_type, payload):

@@ -24,10 +24,11 @@ AGENTS.md 标注的基准 commit：`2b601e6`；当前工作分支为 `phase-2.5-
 - 最小 approval / dry-run 执行保护已落地：`ToolExecutor` 支持 `approval_mode`，dry-run 下读工具允许执行，写文件、编辑文件和运行命令会被统一 `ToolResult` 拦截。
 - 最小 git diff rollback 能力已落地：可以捕获 tracked diff 和新增 untracked 普通文件，并用反向 patch 与保守文件删除恢复快照内变更。
 - 最小 validation runner 已落地：集中执行 command policy 允许的验证命令，并返回结构化 `ValidationReport`。
+- Phase 2.5 已新增 `ToolGateway`，当前 `tool_loop` 已通过网关处理工具调用。
 
 ## In Progress
 
-- Phase 2.5 工具层整理：新增 `ToolGateway`，逐步收敛工具调用入口。
+- Phase 2.5 工具层整理：下一步候选是新增 `tool_guard`，继续集中工具校验入口。
 
 ## Not Started
 
