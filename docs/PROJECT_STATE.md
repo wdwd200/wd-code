@@ -2,11 +2,11 @@
 
 ## Current Phase
 
-Phase 2：安全和可回放
+Phase 2.5：Tool Layer Cleanup
 
 ## Last Reviewed Source
 
-AGENTS.md 标注的基准 commit：`2b601e6`；本轮以当前工作区可见状态为准。
+AGENTS.md 标注的基准 commit：`2b601e6`；当前工作分支为 `phase-2.5-tool-layer-cleanup`。
 
 ## Completed
 
@@ -27,7 +27,7 @@ AGENTS.md 标注的基准 commit：`2b601e6`；本轮以当前工作区可见状
 
 ## In Progress
 
-- Phase 2 收尾检查；下一轮候选 Phase 3 repo map。
+- Phase 2.5 工具层整理：新增 `ToolGateway`，逐步收敛工具调用入口。
 
 ## Not Started
 
