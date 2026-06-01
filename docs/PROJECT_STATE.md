@@ -27,10 +27,11 @@ AGENTS.md 标注的基准 commit：`2b601e6`；当前工作分支为 `phase-2.5-
 - Phase 2.5 已新增 `ToolGateway`，当前 `tool_loop` 已通过网关处理工具调用。
 - Phase 2.5 已新增 `tool_guard`，提供工具调用级校验和准备请求的集中入口。
 - `ToolRegistry` 已收窄为工具目录职责，只保留注册、查找、列表和 schema 输出；兼容的 `ToolExecutor` 现在转入 `ToolGateway`。
+- 工具循环主体已合并进 `agent_loop.run_agent_turn`，`tool_loop.py` 当前仅保留兼容转发入口。
 
 ## In Progress
 
-- Phase 2.5 工具层整理：下一步候选是把工具循环合并进 `agent_loop.run_agent_turn`。
+- Phase 2.5 工具层整理：下一步候选是清理兼容层测试命名和最终收口。
 
 ## Not Started
 
