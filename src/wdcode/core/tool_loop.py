@@ -93,7 +93,7 @@ def handle_assistant_message(conversation, assistant_message, tool_executor, tra
     return None, len(tool_calls)
 
 
-def execute_tool_call(tool_executor, tool_call):
+def   execute_tool_call(tool_executor, tool_call):
     validation_error = validate_tool_call(tool_call)
     if validation_error:
         return ToolResult.failure(validation_error).to_dict()
