@@ -8,13 +8,16 @@ from wdcode.core.conversation import Conversation
 from wdcode.core.message_builder import build_model_messages
 from wdcode.core.model_runner import ModelRunner
 from wdcode.core.response_router import route_assistant_message
-from wdcode.session import SessionRecord, create_session_id, validate_session_id
+from wdcode.session import SessionRecord, build_recovery_summary, create_session_id, validate_session_id
 from wdcode.tools.gateway import ToolGateway
 
 
 MAX_TOOL_ROUNDS = 5
 MAX_TOOL_CALLS_PER_ROUND = 4
 MAX_TOOL_CALLS_PER_REQUEST = 12
+DEFAULT_SUMMARY_TRIGGER_MESSAGES = 30
+DEFAULT_RECOVERY_KEEP_RECENT_MESSAGES = 12
+DEFAULT_MAX_RECOVERY_SUMMARY_CHARS = 4000
 
 
 def run_agent_loop(
@@ -31,6 +34,9 @@ def run_agent_loop(
     context_provider=None,
     session_store=None,
     session_id=None,
+    summary_trigger_messages=DEFAULT_SUMMARY_TRIGGER_MESSAGES,
+    keep_recent_messages=DEFAULT_RECOVERY_KEEP_RECENT_MESSAGES,
+    max_recovery_summary_chars=DEFAULT_MAX_RECOVERY_SUMMARY_CHARS,
 ):
     conversation, session_record = _load_session_conversation(
         conversation=conversation,
@@ -112,6 +118,9 @@ def run_agent_loop(
                 session_store=session_store,
                 session_record=session_record,
                 conversation=conversation,
+                summary_trigger_messages=summary_trigger_messages,
+                keep_recent_messages=keep_recent_messages,
+                max_recovery_summary_chars=max_recovery_summary_chars,
             )
             error_fn(f"Error: {exc}")
             continue
@@ -120,6 +129,9 @@ def run_agent_loop(
             session_store=session_store,
             session_record=session_record,
             conversation=conversation,
+            summary_trigger_messages=summary_trigger_messages,
+            keep_recent_messages=keep_recent_messages,
+            max_recovery_summary_chars=max_recovery_summary_chars,
         )
         output_fn(f"\nAssistant> {assistant_reply}")
 
@@ -199,9 +211,13 @@ def _load_session_conversation(conversation, session_store, session_id):
 
     record = session_store.load(session_id)
     if record is not None:
-        restored = Conversation.from_messages(record.messages)
+        restored = Conversation.from_messages(
+            record.messages,
+            recovery_summary=record.recovery_summary,
+        )
         if conversation is not None:
             conversation.messages = restored.to_messages()
+            conversation.recovery_summary = record.recovery_summary
             restored = conversation
         return restored, record
 
@@ -212,23 +228,66 @@ def _load_session_conversation(conversation, session_store, session_id):
         created_at=created_at,
         updated_at=created_at,
         metadata={},
+        recovery_summary=None,
     )
     return conversation or Conversation(), record
 
 
-def _save_session(session_store, session_record, conversation):
+def _save_session(
+    session_store,
+    session_record,
+    conversation,
+    *,
+    summary_trigger_messages,
+    keep_recent_messages,
+    max_recovery_summary_chars,
+):
     if session_store is None or session_record is None:
         return session_record
 
+    recovery_summary = _build_recovery_summary_dict(
+        conversation=conversation,
+        summary_trigger_messages=summary_trigger_messages,
+        keep_recent_messages=keep_recent_messages,
+        max_recovery_summary_chars=max_recovery_summary_chars,
+    )
+    conversation.recovery_summary = recovery_summary
     record = SessionRecord(
         session_id=session_record.session_id,
         messages=conversation.to_messages(),
         created_at=session_record.created_at,
         updated_at=_utc_now(),
         metadata=session_record.metadata,
+        recovery_summary=recovery_summary,
     )
     session_store.save(record)
     return record
+
+
+def _build_recovery_summary_dict(
+    *,
+    conversation,
+    summary_trigger_messages,
+    keep_recent_messages,
+    max_recovery_summary_chars,
+):
+    messages = conversation.to_messages()
+    if len(messages) <= summary_trigger_messages:
+        return conversation.recovery_summary
+
+    summary = build_recovery_summary(
+        messages,
+        max_summary_chars=max_recovery_summary_chars,
+        keep_recent_messages=keep_recent_messages,
+    )
+    if summary is None:
+        return None
+    return {
+        "summary": summary.summary,
+        "source_message_count": summary.source_message_count,
+        "recent_message_count": summary.recent_message_count,
+        "metadata": summary.metadata,
+    }
 
 
 def _utc_now():

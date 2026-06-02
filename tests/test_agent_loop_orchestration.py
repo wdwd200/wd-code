@@ -157,6 +157,7 @@ def test_run_agent_loop_saves_session_after_successful_user_turn():
     assert record.session_id == "session-success"
     assert record.messages == conversation.to_messages()
     assert [message["role"] for message in record.messages] == ["system", "user", "assistant"]
+    assert record.recovery_summary is None
 
 
 def test_run_agent_loop_restores_existing_session_history():
@@ -221,3 +222,113 @@ def test_run_agent_loop_saves_rolled_back_conversation_after_runtime_error():
     assert record is not None
     assert record.messages == conversation.to_messages()
     assert record.messages == [{"role": "system", "content": "You are a concise CLI programming assistant."}]
+    assert record.recovery_summary is None
+
+
+def test_run_agent_loop_writes_recovery_summary_for_long_conversation():
+    with temp_session_dir() as session_dir:
+        store = SessionStore(session_dir)
+        conversation = Conversation()
+        for index in range(6):
+            conversation.add_user_message(f"old request {index}")
+            conversation.add_assistant_message(f"old answer {index}")
+        client = FakeModelClient([{"role": "assistant", "content": "new answer"}])
+
+        outputs, errors = run_agent_loop_with_inputs(
+            client,
+            ["new request"],
+            conversation=conversation,
+            tool_registry=None,
+            session_store=store,
+            session_id="session-long",
+            summary_trigger_messages=8,
+            keep_recent_messages=4,
+        )
+
+        record = store.load("session-long")
+
+    assert errors == []
+    assert "\nAssistant> new answer" in outputs
+    assert record is not None
+    assert record.recovery_summary is not None
+    assert record.recovery_summary["source_message_count"] == len(record.messages) - 4
+    assert record.recovery_summary["recent_message_count"] == 4
+    assert "old request 0" in record.recovery_summary["summary"]
+    assert record.messages == conversation.to_messages()
+
+
+def test_run_agent_loop_restores_recovery_summary_into_model_messages():
+    with temp_session_dir() as session_dir:
+        store = SessionStore(session_dir)
+        conversation = Conversation()
+        for index in range(6):
+            conversation.add_user_message(f"old request {index}")
+            conversation.add_assistant_message(f"old answer {index}")
+        first_client = FakeModelClient([{"role": "assistant", "content": "first new answer"}])
+        run_agent_loop_with_inputs(
+            first_client,
+            ["first new request"],
+            conversation=conversation,
+            tool_registry=None,
+            session_store=store,
+            session_id="session-recovery-injection",
+            summary_trigger_messages=8,
+            keep_recent_messages=4,
+        )
+
+        second_client = FakeModelClient([{"role": "assistant", "content": "second answer"}])
+        outputs, errors = run_agent_loop_with_inputs(
+            second_client,
+            ["second request"],
+            tool_registry=None,
+            session_store=store,
+            session_id="session-recovery-injection",
+            summary_trigger_messages=100,
+            keep_recent_messages=4,
+        )
+
+    model_messages = second_client.calls[0]["messages"]
+    assert errors == []
+    assert "\nAssistant> second answer" in outputs
+    assert model_messages[0]["role"] == "system"
+    assert model_messages[1]["role"] == "system"
+    assert model_messages[1]["content"].startswith("# Session Recovery Summary")
+    assert "old request 0" in model_messages[1]["content"]
+
+
+def test_run_agent_loop_saves_recovery_summary_after_rollback_for_long_conversation():
+    with temp_session_dir() as session_dir:
+        store = SessionStore(session_dir)
+        conversation = Conversation()
+        for index in range(6):
+            conversation.add_user_message(f"old request {index}")
+            conversation.add_assistant_message(f"old answer {index}")
+        client = FakeModelClient(
+            [
+                {
+                    "role": "assistant",
+                    "content": None,
+                    "tool_calls": [make_tool_call(call_id="call_requires_tools")],
+                }
+            ]
+        )
+
+        outputs, errors = run_agent_loop_with_inputs(
+            client,
+            ["request that rolls back"],
+            conversation=conversation,
+            tool_registry=None,
+            session_store=store,
+            session_id="session-long-rollback",
+            summary_trigger_messages=8,
+            keep_recent_messages=4,
+        )
+
+        record = store.load("session-long-rollback")
+
+    assert "Error: Model requested tools, but no tool registry is available." in errors
+    assert not any(output.startswith("\nAssistant>") for output in outputs)
+    assert record is not None
+    assert record.messages == conversation.to_messages()
+    assert record.recovery_summary is not None
+    assert "request that rolls back" not in record.recovery_summary["summary"]

@@ -5,13 +5,14 @@ SYSTEM_PROMPT = "You are a concise CLI programming assistant."
 
 
 class Conversation:
-    def __init__(self, system_prompt=SYSTEM_PROMPT):
+    def __init__(self, system_prompt=SYSTEM_PROMPT, recovery_summary=None):
         self.messages = [
             {
                 "role": "system",
                 "content": system_prompt,
             }
         ]
+        self.recovery_summary = recovery_summary
 
     def add_user_message(self, content):
         self.messages.append({"role": "user", "content": content})
@@ -57,7 +58,7 @@ class Conversation:
         return copy.deepcopy(self.messages)
 
     @classmethod
-    def from_messages(cls, messages):
-        conversation = cls()
+    def from_messages(cls, messages, recovery_summary=None):
+        conversation = cls(recovery_summary=copy.deepcopy(recovery_summary))
         conversation.messages = copy.deepcopy(messages)
         return conversation
