@@ -2,11 +2,11 @@
 
 ## 当前状态
 
-当前进入 Phase 3.3：Smart Retrieval 最小版。
+当前进入 Phase 3.4：Context Budget 最小版。
 
-本轮已经新增基于 repo map 的关键词候选文件检索能力。`ContextProvider` 在提供 `project_root` 时，可以组合 AGENTS 指令、Repo Map 和 Relevant Files 上下文；默认没有 `project_root` 时仍返回空上下文，避免破坏现有测试和调用方式。
+本轮已经新增字符级上下文预算控制。`ContextProvider` 在提供 `project_root` 时，可以按预算输出 AGENTS.md、Repo Map 和 Relevant Files 上下文；默认没有 `project_root` 时仍返回空上下文，避免破坏现有测试和调用方式。
 
-当前检索只读取 repo map 元数据，不读取候选文件正文。当前没有实现 context budget、recent files、symbol index、embedding、向量数据库或 Phase 3.4 能力。
+当前只做字符数预算，不做 token 预算，不引入 tokenizer。当前检索仍只读取 repo map 元数据，不读取候选文件正文。当前没有实现 recent files、symbol index、embedding、向量数据库或 Phase 3.5 / Phase 3.6 能力。
 
 当前正式工具调用链保持不变：
 
@@ -18,15 +18,21 @@ main -> run_agent_loop -> ToolGateway.handle_many -> ToolGateway.handle -> tool_
 
 一次用户输入进入 `run_agent_loop` 后，会先写入 `Conversation`。随后同一个主循环在每一轮中依次调用 `ContextProvider.build`、`build_model_messages`、`ModelRunner.call`、`route_assistant_message`。如果模型返回最终回答，就写回 assistant 消息并输出；如果模型返回工具调用，就交给 `ToolGateway.handle_many` 执行，再把工具结果写回 conversation，进入下一轮模型调用。
 
-Phase 3.3 后，`ContextProvider.build` 在有项目根目录时会执行：
+Phase 3.4 后，`ContextProvider.build` 在有项目根目录时会执行：
 
 ```text
-build_repo_map -> load_agents_context -> retrieve_relevant_files -> format context
+build_repo_map -> load_agents_context -> retrieve_relevant_files -> apply_context_budget -> ContextBundle
 ```
 
 `build_model_messages` 会把非空上下文作为额外 system message 插入到原系统提示词之后。
 
 ## 当前代码文件和函数说明
+
+`src/wdcode/context/budget.py`
+
+- `ContextBudget` 是字符级上下文预算配置，包含 `max_total_chars`、`max_agents_chars`、`max_repo_map_chars`、`max_relevant_files_chars`。所有预算值都必须大于 0，否则抛出 `ValueError`。
+- `apply_char_budget(text, max_chars, label=...)` 对单段文本应用字符预算。未超长时原样返回；超长时截断并追加 `[TRUNCATED: label]` 标记。
+- `apply_context_budget(agents_text, repo_map_text, relevant_files_text, budget)` 先分别按 section 预算截断 AGENTS.md、Repo Map、Relevant Files，再按总预算截断合并后的 Project Context，并返回截断 metadata。
 
 `src/wdcode/context/retrieval.py`
 
@@ -39,9 +45,9 @@ build_repo_map -> load_agents_context -> retrieve_relevant_files -> format conte
 
 `src/wdcode/context/provider.py`
 
-- `ContextBundle` 是上下文结果的数据结构，目前只有 `text` 字段，默认是空字符串。
-- `ContextProvider.__init__(project_root=None, max_retrieval_results=8)` 保存项目根目录和 retrieval 结果数量上限。`project_root=None` 时保持空上下文行为。
-- `ContextProvider.build(user_input, conversation)` 是上下文构建入口。有项目根目录时，它会构建 repo map、读取根目录 AGENTS.md、检索候选相关文件，并组合成 `ContextBundle.text`。
+- `ContextBundle` 是上下文结果的数据结构，包含 `text` 和可选 `metadata`。`metadata["budget"]` 记录 AGENTS.md、Repo Map、Relevant Files 和总上下文是否被截断。
+- `ContextProvider.__init__(project_root=None, max_retrieval_results=8, budget=None)` 保存项目根目录、retrieval 结果数量上限和 `ContextBudget`。`project_root=None` 时保持空上下文行为。
+- `ContextProvider.build(user_input, conversation)` 是上下文构建入口。有项目根目录时，它会构建 repo map、读取根目录 AGENTS.md、检索候选相关文件，并通过 `apply_context_budget` 组合成受控的 `ContextBundle.text`。
 
 `src/wdcode/core/message_builder.py`
 
@@ -60,7 +66,7 @@ build_repo_map -> load_agents_context -> retrieve_relevant_files -> format conte
 
 `src/wdcode/context/__init__.py`
 
-- 当前导出 AGENTS、Repo Map、ContextProvider 和 Retrieval 相关入口，方便后续模块统一从 `wdcode.context` 引用上下文能力。
+- 当前导出 AGENTS、Repo Map、Retrieval、ContextProvider 和 Context Budget 相关入口，方便后续模块统一从 `wdcode.context` 引用上下文能力。
 
 `src/wdcode/core/tool_loop.py`
 
@@ -76,8 +82,9 @@ build_repo_map -> load_agents_context -> retrieve_relevant_files -> format conte
 
 ## 当前测试说明
 
+- `tests/test_context_budget.py` 覆盖字符预算未截断、字符预算截断、非法预算值、section 截断、总截断和 metadata。
+- `tests/test_context_provider.py` 覆盖 `project_root=None` 空上下文、有项目根目录时组合 AGENTS / Repo Map / Relevant Files、预算截断 metadata，以及不读取候选文件正文。
 - `tests/test_retrieval.py` 覆盖路径匹配、文件名匹配、测试意图、context 意图、空输入、max_results、非法 max_results、稳定排序和格式化输出。
-- `tests/test_context_provider.py` 覆盖 `project_root=None` 空上下文、有项目根目录时组合 AGENTS / Repo Map / Relevant Files，以及不读取候选文件正文。
 - `tests/test_message_builder.py` 覆盖空 context 旧行为、非空 context system message 注入，以及不修改 conversation 本体。
 - `tests/test_agent_loop_fake_model.py` 覆盖无工具调用最终回答、工具调用执行和坏参数工具结果写回。
 - `tests/test_agent_loop_trace.py` 覆盖主循环 trace 事件顺序和敏感字段脱敏。
@@ -89,12 +96,13 @@ build_repo_map -> load_agents_context -> retrieve_relevant_files -> format conte
 
 ## 尚未开始
 
-- context budget
 - recent files
 - symbol index
 - embedding
 - vector database
-- Phase 3.4
+- Phase 3.5
+- Phase 3.6
+- Phase 4
 
 ## 明确推迟
 

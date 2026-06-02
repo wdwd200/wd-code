@@ -2,6 +2,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
+from wdcode.context.budget import ContextBudget
 from wdcode.context.provider import ContextProvider
 from wdcode.core.conversation import Conversation
 
@@ -31,6 +32,7 @@ def test_context_provider_without_project_root_returns_empty_context():
     )
 
     assert context.text == ""
+    assert context.metadata is None
 
 
 def test_context_provider_builds_agents_repo_map_and_relevant_files_context():
@@ -49,12 +51,43 @@ def test_context_provider_builds_agents_repo_map_and_relevant_files_context():
         )
 
     assert "# Project Context" in context.text
-    assert "## AGENTS Instructions" in context.text
+    assert "## AGENTS.md" in context.text
     assert "# AGENTS.md" in context.text
     assert "Follow local rules." in context.text
     assert "## Repo Map" in context.text
     assert "- src/wdcode/context/provider.py [python, source] Python source file" in context.text
-    assert "# Relevant Files" in context.text
+    assert "## Relevant Files" in context.text
     assert "src/wdcode/context/provider.py" in context.text
     assert "tests/test_context_provider.py" in context.text
     assert "SECRET_BODY_SHOULD_NOT_APPEAR" not in context.text
+    assert context.metadata is not None
+    assert context.metadata["budget"]["total_truncated"] is False
+
+
+def test_context_provider_applies_budget_and_records_metadata():
+    with temp_project() as project:
+        write_file(project / "AGENTS.md", "# Test Agents\n\n" + ("Follow local rules.\n" * 20))
+        write_file(
+            project / "src/wdcode/context/provider.py",
+            "SECRET_BODY_SHOULD_NOT_APPEAR = True",
+        )
+        write_file(project / "src/wdcode/context/retrieval.py", "content")
+        write_file(project / "tests/test_context_provider.py", "content")
+
+        context = ContextProvider(
+            project_root=project,
+            budget=ContextBudget(
+                max_total_chars=500,
+                max_agents_chars=80,
+                max_repo_map_chars=140,
+                max_relevant_files_chars=120,
+            ),
+        ).build(
+            user_input="context provider tests",
+            conversation=Conversation(),
+        )
+
+    assert "[TRUNCATED:" in context.text
+    assert "SECRET_BODY_SHOULD_NOT_APPEAR" not in context.text
+    assert context.metadata is not None
+    assert any(context.metadata["budget"].values())

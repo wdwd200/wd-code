@@ -1,4 +1,5 @@
 from wdcode.context.agents import AgentsContext, format_agents_context, load_agents_context
+from wdcode.context.budget import ContextBudget, apply_char_budget, apply_context_budget
 from wdcode.context.provider import ContextBundle, ContextProvider
 from wdcode.context.retrieval import (
     RetrievalCandidate,
@@ -10,11 +11,14 @@ from wdcode.context.repo_map import RepoMap, RepoMapEntry, build_repo_map, forma
 
 __all__ = [
     "AgentsContext",
+    "ContextBudget",
     "ContextBundle",
     "ContextProvider",
     "RepoMap",
     "RepoMapEntry",
     "RetrievalCandidate",
+    "apply_char_budget",
+    "apply_context_budget",
     "build_repo_map",
     "format_agents_context",
     "format_retrieval_candidates",
