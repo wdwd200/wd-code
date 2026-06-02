@@ -29,7 +29,9 @@ def run_agent_loop(
     context_provider=None,
 ):
     conversation = conversation or Conversation()
-    context_provider = context_provider or ContextProvider()
+    context_provider = context_provider or ContextProvider(
+        project_root=getattr(tool_registry, "project_root", None)
+    )
     model_runner = ModelRunner(client)
     tool_gateway = ToolGateway(tool_registry, approval_mode=approval_mode) if tool_registry else None
     error_fn = error_fn or _write_error

@@ -26,3 +26,23 @@ def test_message_builder_does_not_mutate_conversation_messages():
     )
 
     assert conversation.as_messages() == before
+
+
+def test_message_builder_inserts_non_empty_context_after_system_prompt():
+    conversation = Conversation()
+    conversation.add_user_message("hello")
+
+    messages = build_model_messages(
+        conversation=conversation,
+        context=ContextBundle(text="# Project Context"),
+    )
+
+    assert messages == [
+        conversation.as_messages()[0],
+        {"role": "system", "content": "# Project Context"},
+        conversation.as_messages()[1],
+    ]
+    assert conversation.as_messages() == [
+        conversation.as_messages()[0],
+        {"role": "user", "content": "hello"},
+    ]
