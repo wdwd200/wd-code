@@ -3,11 +3,9 @@ from contextlib import contextmanager
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
+from tests.fakes import FakeModelClient, run_agent_loop_with_inputs
 from wdcode.core.conversation import Conversation
-from wdcode.core.agent_loop import run_agent_turn
 from wdcode.tools import create_default_registry
-
-from tests.fakes import FakeModelClient
 
 
 @contextmanager
@@ -23,12 +21,11 @@ def project_temp_dir():
         pass
 
 
-def test_run_agent_turn_dry_run_records_blocked_tool_result():
+def test_run_agent_loop_dry_run_records_blocked_tool_result():
     with project_temp_dir() as (project_root, temp_dir):
         target = temp_dir / "created.txt"
         relative_target = target.relative_to(project_root).as_posix()
         conversation = Conversation()
-        conversation.add_user_message("write a file")
         client = FakeModelClient(
             [
                 {
@@ -57,8 +54,9 @@ def test_run_agent_turn_dry_run_records_blocked_tool_result():
             ]
         )
 
-        result = run_agent_turn(
-            client=client,
+        outputs, errors = run_agent_loop_with_inputs(
+            client,
+            ["write a file"],
             conversation=conversation,
             tool_registry=create_default_registry(project_root),
             approval_mode="dry_run",
@@ -67,7 +65,8 @@ def test_run_agent_turn_dry_run_records_blocked_tool_result():
         tool_message = next(message for message in conversation.messages if message["role"] == "tool")
         tool_content = json.loads(tool_message["content"])
 
-        assert result == "blocked"
+        assert errors == []
+        assert "\nAssistant> blocked" in outputs
         assert tool_message["tool_call_id"] == "call_write"
         assert tool_message["name"] == "write_file"
         assert tool_content["ok"] is False

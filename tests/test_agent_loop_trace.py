@@ -3,12 +3,10 @@ from contextlib import contextmanager
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
+from tests.fakes import FakeModelClient, run_agent_loop_with_inputs
 from wdcode.core.conversation import Conversation
-from wdcode.core.agent_loop import run_agent_turn
 from wdcode.tools import create_default_registry
 from wdcode.trace import TraceWriter
-
-from tests.fakes import FakeModelClient
 
 
 @contextmanager
@@ -27,10 +25,9 @@ def read_jsonl(path):
     return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
 
 
-def test_run_agent_turn_writes_trace_events_for_tool_round():
+def test_run_agent_loop_writes_trace_events_for_tool_round():
     project_root = Path(__file__).resolve().parents[1]
     conversation = Conversation()
-    conversation.add_user_message("list the tests directory")
     client = FakeModelClient(
         [
             {
@@ -55,8 +52,9 @@ def test_run_agent_turn_writes_trace_events_for_tool_round():
     )
 
     with local_trace_path() as trace_path:
-        result = run_agent_turn(
-            client=client,
+        outputs, errors = run_agent_loop_with_inputs(
+            client,
+            ["list the tests directory"],
             conversation=conversation,
             tool_registry=create_default_registry(project_root),
             trace_writer=TraceWriter(trace_path),
@@ -66,7 +64,8 @@ def test_run_agent_turn_writes_trace_events_for_tool_round():
     event_types = [event["event_type"] for event in events]
     tool_result = next(event for event in events if event["event_type"] == "tool_result")
 
-    assert result == "listed"
+    assert errors == []
+    assert "\nAssistant> listed" in outputs
     assert event_types == [
         "assistant_message",
         "tool_call",
@@ -89,10 +88,9 @@ def test_run_agent_turn_writes_trace_events_for_tool_round():
     assert events[-1]["payload"] == {"content": "listed"}
 
 
-def test_run_agent_turn_trace_redacts_sensitive_tool_arguments():
+def test_run_agent_loop_trace_redacts_sensitive_tool_arguments():
     project_root = Path(__file__).resolve().parents[1]
     conversation = Conversation()
-    conversation.add_user_message("call a tool with sensitive-looking fields")
     client = FakeModelClient(
         [
             {
@@ -123,8 +121,9 @@ def test_run_agent_turn_trace_redacts_sensitive_tool_arguments():
     )
 
     with local_trace_path() as trace_path:
-        result = run_agent_turn(
-            client=client,
+        outputs, errors = run_agent_loop_with_inputs(
+            client,
+            ["call a tool with sensitive-looking fields"],
             conversation=conversation,
             tool_registry=create_default_registry(project_root),
             trace_writer=TraceWriter(trace_path),
@@ -135,7 +134,8 @@ def test_run_agent_turn_trace_redacts_sensitive_tool_arguments():
     tool_call = next(event for event in events if event["event_type"] == "tool_call")
     tool_result = next(event for event in events if event["event_type"] == "tool_result")
 
-    assert result == "handled"
+    assert errors == []
+    assert "\nAssistant> handled" in outputs
     assert tool_call["payload"]["arguments"]["api_key"] == "[REDACTED]"
     assert tool_call["payload"]["arguments"]["token"] == "[REDACTED]"
     assert tool_result["payload"]["result"]["ok"] is False

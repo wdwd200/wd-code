@@ -1,6 +1,7 @@
-from wdcode.core.agent_loop import run_agent_turn
+def run_tool_loop(*args, **kwargs):
+    raise RuntimeError(
+        "wdcode.core.tool_loop is deprecated; use wdcode.core.agent_loop.run_agent_loop."
+    )
 
 
-run_tool_loop = run_agent_turn
-
-__all__ = ["run_agent_turn", "run_tool_loop"]
+__all__ = ["run_tool_loop"]
