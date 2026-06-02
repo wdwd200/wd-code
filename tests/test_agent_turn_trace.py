@@ -4,7 +4,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 
 from wdcode.core.conversation import Conversation
-from wdcode.core.tool_loop import run_tool_loop
+from wdcode.core.agent_loop import run_agent_turn
 from wdcode.tools import create_default_registry
 from wdcode.trace import TraceWriter
 
@@ -27,7 +27,7 @@ def read_jsonl(path):
     return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
 
 
-def test_run_tool_loop_writes_trace_events_for_tool_round():
+def test_run_agent_turn_writes_trace_events_for_tool_round():
     project_root = Path(__file__).resolve().parents[1]
     conversation = Conversation()
     conversation.add_user_message("list the tests directory")
@@ -55,7 +55,7 @@ def test_run_tool_loop_writes_trace_events_for_tool_round():
     )
 
     with local_trace_path() as trace_path:
-        result = run_tool_loop(
+        result = run_agent_turn(
             client=client,
             conversation=conversation,
             tool_registry=create_default_registry(project_root),
@@ -89,7 +89,7 @@ def test_run_tool_loop_writes_trace_events_for_tool_round():
     assert events[-1]["payload"] == {"content": "listed"}
 
 
-def test_run_tool_loop_trace_redacts_sensitive_tool_arguments():
+def test_run_agent_turn_trace_redacts_sensitive_tool_arguments():
     project_root = Path(__file__).resolve().parents[1]
     conversation = Conversation()
     conversation.add_user_message("call a tool with sensitive-looking fields")
@@ -123,7 +123,7 @@ def test_run_tool_loop_trace_redacts_sensitive_tool_arguments():
     )
 
     with local_trace_path() as trace_path:
-        result = run_tool_loop(
+        result = run_agent_turn(
             client=client,
             conversation=conversation,
             tool_registry=create_default_registry(project_root),

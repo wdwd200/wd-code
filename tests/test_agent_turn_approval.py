@@ -4,7 +4,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 
 from wdcode.core.conversation import Conversation
-from wdcode.core.tool_loop import run_tool_loop
+from wdcode.core.agent_loop import run_agent_turn
 from wdcode.tools import create_default_registry
 
 from tests.fakes import FakeModelClient
@@ -23,7 +23,7 @@ def project_temp_dir():
         pass
 
 
-def test_run_tool_loop_dry_run_records_blocked_tool_result():
+def test_run_agent_turn_dry_run_records_blocked_tool_result():
     with project_temp_dir() as (project_root, temp_dir):
         target = temp_dir / "created.txt"
         relative_target = target.relative_to(project_root).as_posix()
@@ -57,7 +57,7 @@ def test_run_tool_loop_dry_run_records_blocked_tool_result():
             ]
         )
 
-        result = run_tool_loop(
+        result = run_agent_turn(
             client=client,
             conversation=conversation,
             tool_registry=create_default_registry(project_root),

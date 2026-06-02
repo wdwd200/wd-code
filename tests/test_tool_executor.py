@@ -1,8 +1,8 @@
 from pathlib import Path
 
-from wdcode.core.tool_loop import execute_tool_call
 from wdcode.tools import create_default_registry
 from wdcode.tools.executor import ToolExecutor
+from wdcode.tools.gateway import ToolGateway
 
 
 def test_tool_executor_executes_registered_tool():
@@ -56,9 +56,9 @@ def test_tool_executor_tool_exception_returns_failure():
     assert "File not found" in result.error
 
 
-def test_tool_loop_execute_tool_call_returns_json_serializable_result():
+def test_tool_gateway_handle_returns_json_serializable_result():
     project_root = Path(__file__).resolve().parents[1]
-    executor = ToolExecutor(create_default_registry(project_root))
+    gateway = ToolGateway(create_default_registry(project_root))
     tool_call = {
         "id": "call_1",
         "type": "function",
@@ -68,15 +68,15 @@ def test_tool_loop_execute_tool_call_returns_json_serializable_result():
         },
     }
 
-    result = execute_tool_call(executor, tool_call)
+    result = gateway.handle(tool_call).to_dict()
 
     assert result["ok"] is True
     assert "entries" in result["data"]
 
 
-def test_tool_loop_execute_tool_call_parse_error_returns_unified_failure():
+def test_tool_gateway_handle_parse_error_returns_unified_failure():
     project_root = Path(__file__).resolve().parents[1]
-    executor = ToolExecutor(create_default_registry(project_root))
+    gateway = ToolGateway(create_default_registry(project_root))
     tool_call = {
         "id": "call_1",
         "type": "function",
@@ -86,7 +86,7 @@ def test_tool_loop_execute_tool_call_parse_error_returns_unified_failure():
         },
     }
 
-    result = execute_tool_call(executor, tool_call)
+    result = gateway.handle(tool_call).to_dict()
 
     assert result["ok"] is False
     assert "Invalid tool arguments" in result["error"]

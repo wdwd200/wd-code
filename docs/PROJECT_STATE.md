@@ -28,10 +28,12 @@ AGENTS.md 标注的基准 commit：`2b601e6`；当前工作分支为 `phase-2.5-
 - Phase 2.5 已新增 `tool_guard`，提供工具调用级校验和准备请求的集中入口。
 - `ToolRegistry` 已收窄为工具目录职责，只保留注册、查找、列表和 schema 输出；兼容的 `ToolExecutor` 现在转入 `ToolGateway`。
 - 工具循环主体已合并进 `agent_loop.run_agent_turn`，`tool_loop.py` 当前仅保留兼容转发入口。
+- Phase 2.5 工具层调用链收口已完成：正式路径为 `main -> run_agent_loop -> run_agent_turn -> ToolGateway.handle -> tool_guard.prepare_tool_request -> tool.execute`。
+- 旧 `test_tool_loop_*` 测试已迁移为 `test_agent_turn_*`，测试入口不再把 `tool_loop.py` 当作真实执行层。
 
 ## In Progress
 
-- Phase 2.5 工具层整理：下一步候选是清理兼容层测试命名和最终收口。
+- Phase 2.5 已收口；下一步候选是 Phase 3 repo map。
 
 ## Not Started
 

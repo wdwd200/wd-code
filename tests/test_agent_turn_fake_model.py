@@ -2,13 +2,13 @@ import json
 from pathlib import Path
 
 from wdcode.core.conversation import Conversation
-from wdcode.core.tool_loop import run_tool_loop
+from wdcode.core.agent_loop import run_agent_turn
 from wdcode.tools import create_default_registry
 
 from tests.fakes import FakeModelClient
 
 
-def test_run_tool_loop_returns_final_answer_without_tools():
+def test_run_agent_turn_returns_final_answer_without_tools():
     conversation = Conversation()
     conversation.add_user_message("hello")
     client = FakeModelClient(
@@ -20,7 +20,7 @@ def test_run_tool_loop_returns_final_answer_without_tools():
         ]
     )
 
-    result = run_tool_loop(client=client, conversation=conversation, tool_registry=None)
+    result = run_agent_turn(client=client, conversation=conversation, tool_registry=None)
 
     assert result == "done"
     assert conversation.messages[-1] == {"role": "assistant", "content": "done"}
@@ -28,7 +28,7 @@ def test_run_tool_loop_returns_final_answer_without_tools():
     assert client.calls[0]["tools"] is None
 
 
-def test_run_tool_loop_executes_tool_call_and_records_tool_result():
+def test_run_agent_turn_executes_tool_call_and_records_tool_result():
     project_root = Path(__file__).resolve().parents[1]
     conversation = Conversation()
     conversation.add_user_message("list the tests directory")
@@ -55,7 +55,7 @@ def test_run_tool_loop_executes_tool_call_and_records_tool_result():
         ]
     )
 
-    result = run_tool_loop(
+    result = run_agent_turn(
         client=client,
         conversation=conversation,
         tool_registry=create_default_registry(project_root),
@@ -76,7 +76,7 @@ def test_run_tool_loop_executes_tool_call_and_records_tool_result():
     assert isinstance(tool_content["metadata"], dict)
 
 
-def test_run_tool_loop_records_unified_failure_for_bad_tool_arguments():
+def test_run_agent_turn_records_unified_failure_for_bad_tool_arguments():
     project_root = Path(__file__).resolve().parents[1]
     conversation = Conversation()
     conversation.add_user_message("call a tool with invalid arguments")
@@ -103,7 +103,7 @@ def test_run_tool_loop_records_unified_failure_for_bad_tool_arguments():
         ]
     )
 
-    result = run_tool_loop(
+    result = run_agent_turn(
         client=client,
         conversation=conversation,
         tool_registry=create_default_registry(project_root),
