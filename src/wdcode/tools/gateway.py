@@ -48,3 +48,6 @@ class ToolGateway:
             dry_run=dry_run,
             approval_mode=self.approval_mode,
         )
+
+    def handle_many(self, tool_calls):
+        return [self.handle(tool_call) for tool_call in tool_calls]

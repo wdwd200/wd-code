@@ -7,6 +7,7 @@ from wdcode.tools import create_default_registry
 from wdcode.tools.base import Tool
 from wdcode.tools.gateway import ToolGateway
 from wdcode.tools.registry import ToolRegistry
+from wdcode.tools.result import ToolResult
 
 
 @contextmanager
@@ -54,6 +55,24 @@ def test_tool_gateway_handles_successful_tool_call():
     assert "entries" in result.data
     assert result.metadata["tool_name"] == "list_files"
     assert result.metadata["stage"] == "execution"
+
+
+def test_tool_gateway_handle_many_returns_results_in_call_order():
+    project_root = Path(__file__).resolve().parents[1]
+    gateway = ToolGateway(create_default_registry(project_root))
+    calls = [
+        make_tool_call("first_tool", {}, call_id="call_1"),
+        make_tool_call("second_tool", {}, call_id="call_2"),
+    ]
+
+    def recording_handle(tool_call):
+        return ToolResult.success({"call_id": tool_call["id"]})
+
+    gateway.handle = recording_handle
+
+    results = gateway.handle_many(calls)
+
+    assert [result.data["call_id"] for result in results] == ["call_1", "call_2"]
 
 
 def test_tool_gateway_wraps_invalid_arguments_as_tool_result():
