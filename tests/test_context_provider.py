@@ -1,6 +1,10 @@
 from contextlib import contextmanager
 from pathlib import Path
+import shutil
+import subprocess
 from tempfile import TemporaryDirectory
+
+import pytest
 
 from wdcode.context.budget import ContextBudget
 from wdcode.context.provider import ContextProvider
@@ -23,6 +27,33 @@ def temp_project():
 def write_file(path, content="content"):
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(content, encoding="utf-8")
+
+
+def require_git():
+    if shutil.which("git") is None:
+        pytest.skip("git is not available")
+
+
+def run_git(project, *args):
+    result = subprocess.run(
+        ["git", *args],
+        cwd=project,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=10,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    return result
+
+
+def init_repo(project):
+    require_git()
+    run_git(project, "init")
+    run_git(project, "config", "user.email", "tests@example.invalid")
+    run_git(project, "config", "user.name", "Tests")
 
 
 def test_context_provider_without_project_root_returns_empty_context():
@@ -56,12 +87,37 @@ def test_context_provider_builds_agents_repo_map_and_relevant_files_context():
     assert "Follow local rules." in context.text
     assert "## Repo Map" in context.text
     assert "- src/wdcode/context/provider.py [python, source] Python source file" in context.text
+    assert "## Recent Files" in context.text
     assert "## Relevant Files" in context.text
     assert "src/wdcode/context/provider.py" in context.text
     assert "tests/test_context_provider.py" in context.text
     assert "SECRET_BODY_SHOULD_NOT_APPEAR" not in context.text
     assert context.metadata is not None
     assert context.metadata["budget"]["total_truncated"] is False
+    assert context.metadata["recent_files_count"] == 0
+
+
+def test_context_provider_includes_recent_files_from_git_status():
+    with temp_project() as project:
+        init_repo(project)
+        write_file(project / "AGENTS.md", "# Test Agents\n")
+        write_file(project / "src/wdcode/context/provider.py", "content")
+        write_file(
+            project / "src/wdcode/context/recent_files.py",
+            "RECENT_BODY_SHOULD_NOT_APPEAR = True",
+        )
+
+        context = ContextProvider(project_root=project).build(
+            user_input="context recent files",
+            conversation=Conversation(),
+        )
+
+    assert "## Recent Files" in context.text
+    assert "- AGENTS.md [untracked] git status: ??" in context.text
+    assert "- src/wdcode/context/recent_files.py [untracked] git status: ??" in context.text
+    assert "RECENT_BODY_SHOULD_NOT_APPEAR" not in context.text
+    assert context.metadata is not None
+    assert context.metadata["recent_files_count"] >= 1
 
 
 def test_context_provider_applies_budget_and_records_metadata():
@@ -80,6 +136,7 @@ def test_context_provider_applies_budget_and_records_metadata():
                 max_total_chars=500,
                 max_agents_chars=80,
                 max_repo_map_chars=140,
+                max_recent_files_chars=80,
                 max_relevant_files_chars=120,
             ),
         ).build(
@@ -91,3 +148,30 @@ def test_context_provider_applies_budget_and_records_metadata():
     assert "SECRET_BODY_SHOULD_NOT_APPEAR" not in context.text
     assert context.metadata is not None
     assert any(context.metadata["budget"].values())
+
+
+def test_context_provider_can_truncate_recent_files_section():
+    with temp_project() as project:
+        init_repo(project)
+        write_file(project / "AGENTS.md", "# Test Agents\n")
+        for index in range(6):
+            write_file(project / f"src/file_{index}.py", "RECENT_BODY_SHOULD_NOT_APPEAR")
+
+        context = ContextProvider(
+            project_root=project,
+            budget=ContextBudget(
+                max_total_chars=1000,
+                max_agents_chars=200,
+                max_repo_map_chars=400,
+                max_recent_files_chars=70,
+                max_relevant_files_chars=200,
+            ),
+        ).build(
+            user_input="recent files",
+            conversation=Conversation(),
+        )
+
+    assert "[TRUNCATED: recent_files]" in context.text
+    assert "RECENT_BODY_SHOULD_NOT_APPEAR" not in context.text
+    assert context.metadata is not None
+    assert context.metadata["budget"]["recent_files_truncated"] is True

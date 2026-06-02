@@ -23,6 +23,11 @@ def test_context_budget_rejects_non_positive_values():
         ContextBudget(max_agents_chars=0)
 
 
+def test_context_budget_rejects_non_positive_recent_files_budget():
+    with pytest.raises(ValueError, match="max_recent_files_chars"):
+        ContextBudget(max_recent_files_chars=0)
+
+
 def test_apply_context_budget_truncates_individual_sections():
     context_text, metadata = apply_context_budget(
         agents_text="agents " * 20,
@@ -42,9 +47,42 @@ def test_apply_context_budget_truncates_individual_sections():
     assert metadata == {
         "agents_truncated": True,
         "repo_map_truncated": True,
+        "recent_files_truncated": False,
         "relevant_files_truncated": False,
         "total_truncated": False,
     }
+
+
+def test_apply_context_budget_truncates_recent_files_section():
+    context_text, metadata = apply_context_budget(
+        agents_text="agents",
+        repo_map_text="repo",
+        recent_files_text="recent " * 20,
+        relevant_files_text="files",
+        budget=ContextBudget(
+            max_total_chars=1000,
+            max_agents_chars=100,
+            max_repo_map_chars=100,
+            max_recent_files_chars=60,
+            max_relevant_files_chars=100,
+        ),
+    )
+
+    assert "## Recent Files" in context_text
+    assert "[TRUNCATED: recent_files]" in context_text
+    assert metadata["recent_files_truncated"] is True
+
+
+def test_apply_context_budget_old_call_style_uses_empty_recent_files_section():
+    context_text, metadata = apply_context_budget(
+        agents_text="agents",
+        repo_map_text="repo",
+        relevant_files_text="files",
+        budget=ContextBudget(),
+    )
+
+    assert "## Recent Files" in context_text
+    assert metadata["recent_files_truncated"] is False
 
 
 def test_apply_context_budget_supports_total_truncation():
@@ -63,5 +101,6 @@ def test_apply_context_budget_supports_total_truncation():
     assert context_text.endswith("[TRUNCATED: project_context]")
     assert metadata["agents_truncated"] is False
     assert metadata["repo_map_truncated"] is False
+    assert metadata["recent_files_truncated"] is False
     assert metadata["relevant_files_truncated"] is False
     assert metadata["total_truncated"] is True

@@ -6,6 +6,7 @@ class ContextBudget:
     max_total_chars: int = 20000
     max_agents_chars: int = 6000
     max_repo_map_chars: int = 8000
+    max_recent_files_chars: int = 3000
     max_relevant_files_chars: int = 4000
 
     def __post_init__(self):
@@ -40,6 +41,7 @@ def apply_context_budget(
     repo_map_text: str,
     relevant_files_text: str,
     budget: ContextBudget,
+    recent_files_text: str = "",
 ) -> tuple[str, dict[str, bool]]:
     agents_text, agents_truncated = apply_char_budget(
         agents_text,
@@ -50,6 +52,11 @@ def apply_context_budget(
         repo_map_text,
         budget.max_repo_map_chars,
         label="repo_map",
+    )
+    recent_files_text, recent_files_truncated = apply_char_budget(
+        recent_files_text,
+        budget.max_recent_files_chars,
+        label="recent_files",
     )
     relevant_files_text, relevant_files_truncated = apply_char_budget(
         relevant_files_text,
@@ -64,6 +71,8 @@ def apply_context_budget(
             agents_text,
             "## Repo Map",
             repo_map_text,
+            "## Recent Files",
+            recent_files_text,
             "## Relevant Files",
             relevant_files_text,
         ]
@@ -77,6 +86,7 @@ def apply_context_budget(
     return context_text, {
         "agents_truncated": agents_truncated,
         "repo_map_truncated": repo_map_truncated,
+        "recent_files_truncated": recent_files_truncated,
         "relevant_files_truncated": relevant_files_truncated,
         "total_truncated": total_truncated,
     }
