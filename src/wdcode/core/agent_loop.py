@@ -1,5 +1,6 @@
 import json
 import sys
+from datetime import datetime, timezone
 
 from wdcode.cli.commands import is_exit_command
 from wdcode.context.provider import ContextProvider
@@ -7,6 +8,7 @@ from wdcode.core.conversation import Conversation
 from wdcode.core.message_builder import build_model_messages
 from wdcode.core.model_runner import ModelRunner
 from wdcode.core.response_router import route_assistant_message
+from wdcode.session import SessionRecord, create_session_id, validate_session_id
 from wdcode.tools.gateway import ToolGateway
 
 
@@ -27,8 +29,14 @@ def run_agent_loop(
     trace_writer=None,
     approval_mode="auto",
     context_provider=None,
+    session_store=None,
+    session_id=None,
 ):
-    conversation = conversation or Conversation()
+    conversation, session_record = _load_session_conversation(
+        conversation=conversation,
+        session_store=session_store,
+        session_id=session_id,
+    )
     context_provider = context_provider or ContextProvider(
         project_root=getattr(tool_registry, "project_root", None)
     )
@@ -100,9 +108,19 @@ def run_agent_loop(
                 _write_trace(trace_writer, "tool_loop_stopped", {"reason": assistant_reply})
         except RuntimeError as exc:
             conversation.rollback(checkpoint)
+            session_record = _save_session(
+                session_store=session_store,
+                session_record=session_record,
+                conversation=conversation,
+            )
             error_fn(f"Error: {exc}")
             continue
 
+        session_record = _save_session(
+            session_store=session_store,
+            session_record=session_record,
+            conversation=conversation,
+        )
         output_fn(f"\nAssistant> {assistant_reply}")
 
 
@@ -168,3 +186,50 @@ def _trace_tool_arguments(tool_call):
 
 def _tool_name(tool_call):
     return tool_call.get("function", {}).get("name", "")
+
+
+def _load_session_conversation(conversation, session_store, session_id):
+    if session_store is None:
+        return conversation or Conversation(), None
+
+    if session_id is None:
+        session_id = create_session_id()
+    else:
+        session_id = validate_session_id(session_id)
+
+    record = session_store.load(session_id)
+    if record is not None:
+        restored = Conversation.from_messages(record.messages)
+        if conversation is not None:
+            conversation.messages = restored.to_messages()
+            restored = conversation
+        return restored, record
+
+    created_at = _utc_now()
+    record = SessionRecord(
+        session_id=session_id,
+        messages=[],
+        created_at=created_at,
+        updated_at=created_at,
+        metadata={},
+    )
+    return conversation or Conversation(), record
+
+
+def _save_session(session_store, session_record, conversation):
+    if session_store is None or session_record is None:
+        return session_record
+
+    record = SessionRecord(
+        session_id=session_record.session_id,
+        messages=conversation.to_messages(),
+        created_at=session_record.created_at,
+        updated_at=_utc_now(),
+        metadata=session_record.metadata,
+    )
+    session_store.save(record)
+    return record
+
+
+def _utc_now():
+    return datetime.now(timezone.utc).isoformat()

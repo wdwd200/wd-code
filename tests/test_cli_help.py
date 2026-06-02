@@ -27,6 +27,8 @@ def test_compat_cli_help_does_not_need_api_key():
 
     assert result.returncode == 0
     assert "usage:" in result.stdout
+    assert "--session-id" in result.stdout
+    assert "--session-dir" in result.stdout
 
 
 def test_package_cli_help_does_not_need_api_key():
@@ -34,3 +36,5 @@ def test_package_cli_help_does_not_need_api_key():
 
     assert result.returncode == 0
     assert "usage:" in result.stdout
+    assert "--session-id" in result.stdout
+    assert "--session-dir" in result.stdout

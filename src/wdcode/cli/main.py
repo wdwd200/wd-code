@@ -8,10 +8,12 @@ if __package__ in {None, ""}:
 from wdcode.core.agent_loop import run_agent_loop
 from wdcode.infra.config import DEFAULT_CONFIG_PATH, build_runtime_config
 from wdcode.providers.openai_client import OpenAIClient
+from wdcode.session import SessionStore
 from wdcode.tools import create_default_registry
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
+DEFAULT_SESSION_DIR = PROJECT_ROOT / ".wdcode" / "sessions"
 
 
 def parse_args(argv):
@@ -21,6 +23,11 @@ def parse_args(argv):
     parser.add_argument("--model", help="Model name")
     parser.add_argument("--config", default=str(DEFAULT_CONFIG_PATH), help=f"Config file path. Default: {DEFAULT_CONFIG_PATH}")
     parser.add_argument("--save-config", action="store_true", help="Save resolved base_url, api_key, and model to config")
+    parser.add_argument("--session-id", help="Session id to restore or create")
+    parser.add_argument(
+        "--session-dir",
+        help=f"Session storage directory. Default when session is enabled: {DEFAULT_SESSION_DIR}",
+    )
     return parser.parse_args(argv)
 
 
@@ -37,7 +44,15 @@ def main(argv=None):
     config = build_runtime_config(args)
     client = create_llm_client(config)
     tool_registry = create_default_registry(PROJECT_ROOT)
-    run_agent_loop(client, tool_registry=tool_registry)
+    session_store = None
+    if args.session_id or args.session_dir:
+        session_store = SessionStore(args.session_dir or DEFAULT_SESSION_DIR)
+    run_agent_loop(
+        client,
+        tool_registry=tool_registry,
+        session_store=session_store,
+        session_id=args.session_id,
+    )
 
 
 if __name__ == "__main__":

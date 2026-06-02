@@ -1,3 +1,6 @@
+import copy
+
+
 SYSTEM_PROMPT = "You are a concise CLI programming assistant."
 
 
@@ -49,3 +52,12 @@ class Conversation:
 
     def as_messages(self):
         return list(self.messages)
+
+    def to_messages(self):
+        return copy.deepcopy(self.messages)
+
+    @classmethod
+    def from_messages(cls, messages):
+        conversation = cls()
+        conversation.messages = copy.deepcopy(messages)
+        return conversation
