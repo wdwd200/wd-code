@@ -8,6 +8,12 @@ from wdcode.context.retrieval import (
     retrieve_relevant_files,
 )
 from wdcode.context.repo_map import RepoMap, RepoMapEntry, build_repo_map, format_repo_map
+from wdcode.context.symbol_index import (
+    FileSymbols,
+    SymbolInfo,
+    build_symbol_index,
+    format_symbol_index,
+)
 
 
 __all__ = [
@@ -15,18 +21,22 @@ __all__ = [
     "ContextBudget",
     "ContextBundle",
     "ContextProvider",
+    "FileSymbols",
     "RepoMap",
     "RepoMapEntry",
     "RecentFile",
     "RetrievalCandidate",
+    "SymbolInfo",
     "apply_char_budget",
     "apply_context_budget",
     "build_repo_map",
+    "build_symbol_index",
     "collect_recent_files",
     "format_agents_context",
     "format_recent_files",
     "format_retrieval_candidates",
     "format_repo_map",
+    "format_symbol_index",
     "load_agents_context",
     "retrieve_relevant_files",
 ]

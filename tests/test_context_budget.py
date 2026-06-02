@@ -28,6 +28,11 @@ def test_context_budget_rejects_non_positive_recent_files_budget():
         ContextBudget(max_recent_files_chars=0)
 
 
+def test_context_budget_rejects_non_positive_symbol_index_budget():
+    with pytest.raises(ValueError, match="max_symbol_index_chars"):
+        ContextBudget(max_symbol_index_chars=0)
+
+
 def test_apply_context_budget_truncates_individual_sections():
     context_text, metadata = apply_context_budget(
         agents_text="agents " * 20,
@@ -37,6 +42,7 @@ def test_apply_context_budget_truncates_individual_sections():
             max_total_chars=1000,
             max_agents_chars=50,
             max_repo_map_chars=45,
+            max_symbol_index_chars=100,
             max_relevant_files_chars=100,
         ),
     )
@@ -48,6 +54,7 @@ def test_apply_context_budget_truncates_individual_sections():
         "agents_truncated": True,
         "repo_map_truncated": True,
         "recent_files_truncated": False,
+        "symbol_index_truncated": False,
         "relevant_files_truncated": False,
         "total_truncated": False,
     }
@@ -64,6 +71,7 @@ def test_apply_context_budget_truncates_recent_files_section():
             max_agents_chars=100,
             max_repo_map_chars=100,
             max_recent_files_chars=60,
+            max_symbol_index_chars=100,
             max_relevant_files_chars=100,
         ),
     )
@@ -71,6 +79,28 @@ def test_apply_context_budget_truncates_recent_files_section():
     assert "## Recent Files" in context_text
     assert "[TRUNCATED: recent_files]" in context_text
     assert metadata["recent_files_truncated"] is True
+
+
+def test_apply_context_budget_truncates_symbol_index_section():
+    context_text, metadata = apply_context_budget(
+        agents_text="agents",
+        repo_map_text="repo",
+        recent_files_text="recent",
+        symbol_index_text="symbol " * 20,
+        relevant_files_text="files",
+        budget=ContextBudget(
+            max_total_chars=1000,
+            max_agents_chars=100,
+            max_repo_map_chars=100,
+            max_recent_files_chars=100,
+            max_symbol_index_chars=60,
+            max_relevant_files_chars=100,
+        ),
+    )
+
+    assert "## Symbol Index" in context_text
+    assert "[TRUNCATED: symbol_index]" in context_text
+    assert metadata["symbol_index_truncated"] is True
 
 
 def test_apply_context_budget_old_call_style_uses_empty_recent_files_section():
@@ -82,7 +112,9 @@ def test_apply_context_budget_old_call_style_uses_empty_recent_files_section():
     )
 
     assert "## Recent Files" in context_text
+    assert "## Symbol Index" in context_text
     assert metadata["recent_files_truncated"] is False
+    assert metadata["symbol_index_truncated"] is False
 
 
 def test_apply_context_budget_supports_total_truncation():
@@ -94,6 +126,7 @@ def test_apply_context_budget_supports_total_truncation():
             max_total_chars=80,
             max_agents_chars=200,
             max_repo_map_chars=200,
+            max_symbol_index_chars=200,
             max_relevant_files_chars=200,
         ),
     )
@@ -102,5 +135,6 @@ def test_apply_context_budget_supports_total_truncation():
     assert metadata["agents_truncated"] is False
     assert metadata["repo_map_truncated"] is False
     assert metadata["recent_files_truncated"] is False
+    assert metadata["symbol_index_truncated"] is False
     assert metadata["relevant_files_truncated"] is False
     assert metadata["total_truncated"] is True

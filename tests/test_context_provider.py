@@ -71,7 +71,18 @@ def test_context_provider_builds_agents_repo_map_and_relevant_files_context():
         write_file(project / "AGENTS.md", "# Test Agents\n\nFollow local rules.")
         write_file(
             project / "src/wdcode/context/provider.py",
-            "SECRET_BODY_SHOULD_NOT_APPEAR = True",
+            "\n".join(
+                [
+                    "import pathlib",
+                    "",
+                    "class ContextProvider:",
+                    "    def build(self):",
+                    "        return 'SECRET_BODY_SHOULD_NOT_APPEAR'",
+                    "",
+                    "def helper():",
+                    "    return 'HELPER_BODY_SHOULD_NOT_APPEAR'",
+                ]
+            ),
         )
         write_file(project / "src/wdcode/core/agent_loop.py", "content")
         write_file(project / "tests/test_context_provider.py", "content")
@@ -88,13 +99,19 @@ def test_context_provider_builds_agents_repo_map_and_relevant_files_context():
     assert "## Repo Map" in context.text
     assert "- src/wdcode/context/provider.py [python, source] Python source file" in context.text
     assert "## Recent Files" in context.text
+    assert "## Symbol Index" in context.text
     assert "## Relevant Files" in context.text
     assert "src/wdcode/context/provider.py" in context.text
     assert "tests/test_context_provider.py" in context.text
+    assert "ContextProvider(class)" in context.text
+    assert "helper(function)" in context.text
+    assert "pathlib" in context.text
     assert "SECRET_BODY_SHOULD_NOT_APPEAR" not in context.text
+    assert "HELPER_BODY_SHOULD_NOT_APPEAR" not in context.text
     assert context.metadata is not None
     assert context.metadata["budget"]["total_truncated"] is False
     assert context.metadata["recent_files_count"] == 0
+    assert context.metadata["symbol_index_files_count"] == 1
 
 
 def test_context_provider_includes_recent_files_from_git_status():
@@ -137,6 +154,7 @@ def test_context_provider_applies_budget_and_records_metadata():
                 max_agents_chars=80,
                 max_repo_map_chars=140,
                 max_recent_files_chars=80,
+                max_symbol_index_chars=120,
                 max_relevant_files_chars=120,
             ),
         ).build(
@@ -164,6 +182,7 @@ def test_context_provider_can_truncate_recent_files_section():
                 max_agents_chars=200,
                 max_repo_map_chars=400,
                 max_recent_files_chars=70,
+                max_symbol_index_chars=400,
                 max_relevant_files_chars=200,
             ),
         ).build(
@@ -175,3 +194,35 @@ def test_context_provider_can_truncate_recent_files_section():
     assert "RECENT_BODY_SHOULD_NOT_APPEAR" not in context.text
     assert context.metadata is not None
     assert context.metadata["budget"]["recent_files_truncated"] is True
+
+
+def test_context_provider_can_truncate_symbol_index_section():
+    with temp_project() as project:
+        write_file(project / "AGENTS.md", "# Test Agents\n")
+        for index in range(6):
+            write_file(
+                project / f"src/module_{index}.py",
+                f"def symbol_{index}():\n    return 'SYMBOL_BODY_SHOULD_NOT_APPEAR'\n",
+            )
+
+        context = ContextProvider(
+            project_root=project,
+            budget=ContextBudget(
+                max_total_chars=1200,
+                max_agents_chars=200,
+                max_repo_map_chars=400,
+                max_recent_files_chars=200,
+                max_symbol_index_chars=80,
+                max_relevant_files_chars=200,
+            ),
+        ).build(
+            user_input="symbol index",
+            conversation=Conversation(),
+        )
+
+    assert "## Symbol Index" in context.text
+    assert "[TRUNCATED: symbol_index]" in context.text
+    assert "SYMBOL_BODY_SHOULD_NOT_APPEAR" not in context.text
+    assert context.metadata is not None
+    assert context.metadata["symbol_index_files_count"] == 6
+    assert context.metadata["budget"]["symbol_index_truncated"] is True
