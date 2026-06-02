@@ -2,11 +2,11 @@
 
 ## Current Phase
 
-Phase 2.5：Tool Layer Cleanup
+Phase 3.1：最小 Repo Map 骨架
 
 ## Last Reviewed Source
 
-AGENTS.md 标注的基准 commit：`2b601e6`；当前工作分支为 `phase-2.5-tool-layer-cleanup`。
+Phase 2.5 稳定 commit：`ff23aef`；当前工作分支为 `phase-2.5-tool-layer-cleanup`。
 
 ## Completed
 
@@ -30,14 +30,17 @@ AGENTS.md 标注的基准 commit：`2b601e6`；当前工作分支为 `phase-2.5-
 - 工具循环主体已合并进 `agent_loop.run_agent_turn`，`tool_loop.py` 当前仅保留兼容转发入口。
 - Phase 2.5 工具层调用链收口已完成：正式路径为 `main -> run_agent_loop -> run_agent_turn -> ToolGateway.handle -> tool_guard.prepare_tool_request -> tool.execute`。
 - 旧 `test_tool_loop_*` 测试已迁移为 `test_agent_turn_*`，测试入口不再把 `tool_loop.py` 当作真实执行层。
+- Phase 3.1 已新增最小 Repo Map 骨架：当前只做文件级扫描、分类、角色识别和稳定格式化输出，尚未接入 agent loop。
 
 ## In Progress
 
-- Phase 2.5 已收口；下一步候选是 Phase 3 repo map。
+- Phase 3.1 Repo Map 骨架验证；当前验证命令仍为 `python -m pytest`。
 
 ## Not Started
 
-- repo map
+- symbol index
+- smart retrieval
+- context budget
 - eval task skeleton
 
 ## Explicitly Deferred
