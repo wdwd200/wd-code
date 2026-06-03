@@ -5,7 +5,12 @@ def test_core_packages_import_without_api_key():
     import wdcode.infra.config
     import wdcode.security.paths
     from wdcode.core.failure_recovery import FailureEvent, FailureReport, RetryPolicy
-    from wdcode.session import CheckpointStore, TurnCheckpoint
+    from wdcode.session import (
+        CheckpointStore,
+        CompressionPolicy,
+        ConversationCompression,
+        TurnCheckpoint,
+    )
     import wdcode.tools
 
     assert wdcode is not None
@@ -13,4 +18,6 @@ def test_core_packages_import_without_api_key():
     assert FailureEvent is not None
     assert FailureReport is not None
     assert CheckpointStore is not None
+    assert CompressionPolicy is not None
+    assert ConversationCompression is not None
     assert TurnCheckpoint is not None

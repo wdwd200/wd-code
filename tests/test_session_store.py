@@ -48,6 +48,19 @@ def make_recovery_summary():
     }
 
 
+def make_compression_summary():
+    return {
+        "summary": "# Compressed Conversation History\n\nEarlier messages compressed.",
+        "source_message_count": 20,
+        "kept_recent_message_count": 4,
+        "compressed_message_count": 16,
+        "key_files": ["src/wdcode/session/compression.py"],
+        "key_tool_results": [{"tool_call_id": "call_1", "content_preview": "ok"}],
+        "source_range": {"start_index": 0, "end_index": 15},
+        "metadata": {"method": "deterministic-rule-based"},
+    }
+
+
 def test_create_session_id_generates_valid_file_name_id():
     session_id = create_session_id()
 
@@ -145,6 +158,29 @@ def test_session_store_save_and_load_preserves_recovery_summary():
     assert loaded.recovery_summary == make_recovery_summary()
 
 
+def test_session_store_save_and_load_preserves_compression_summary():
+    with temp_session_dir() as session_dir:
+        store = SessionStore(session_dir)
+        record = make_record("compression-session")
+        record = SessionRecord(
+            session_id=record.session_id,
+            messages=record.messages,
+            created_at=record.created_at,
+            updated_at=record.updated_at,
+            metadata=record.metadata,
+            recovery_summary=make_recovery_summary(),
+            compression_summary=make_compression_summary(),
+        )
+
+        store.save(record)
+        loaded = store.load("compression-session")
+
+    assert loaded is not None
+    assert loaded.metadata == {"project": "wd-code"}
+    assert loaded.recovery_summary == make_recovery_summary()
+    assert loaded.compression_summary == make_compression_summary()
+
+
 def test_session_store_loads_old_session_without_recovery_summary():
     with temp_session_dir() as session_dir:
         payload = {
@@ -165,6 +201,7 @@ def test_session_store_loads_old_session_without_recovery_summary():
 
     assert loaded is not None
     assert loaded.recovery_summary is None
+    assert loaded.compression_summary is None
 
 
 def test_session_store_loads_old_session_without_metadata():

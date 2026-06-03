@@ -20,6 +20,7 @@ class SessionRecord:
     updated_at: str
     metadata: dict[str, Any]
     recovery_summary: dict[str, Any] | None = None
+    compression_summary: dict[str, Any] | None = None
 
 
 def create_session_id() -> str:
@@ -55,6 +56,7 @@ class SessionStore:
             "messages": copy.deepcopy(record.messages),
             "metadata": copy.deepcopy(record.metadata),
             "recovery_summary": copy.deepcopy(record.recovery_summary),
+            "compression_summary": copy.deepcopy(record.compression_summary),
         }
         self._path_for(session_id).write_text(
             json.dumps(payload, ensure_ascii=False, indent=2),
@@ -83,6 +85,7 @@ class SessionStore:
                 updated_at=payload["updated_at"],
                 metadata=copy.deepcopy(payload.get("metadata") or {}),
                 recovery_summary=copy.deepcopy(payload.get("recovery_summary")),
+                compression_summary=copy.deepcopy(payload.get("compression_summary")),
             )
         except (KeyError, TypeError) as exc:
             raise ValueError(f"Invalid session record for {session_id}.") from exc

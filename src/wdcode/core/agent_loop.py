@@ -18,12 +18,15 @@ from wdcode.core.model_runner import ModelRunner
 from wdcode.core.response_router import route_assistant_message
 from wdcode.session import (
     CheckpointStore,
+    CompressionPolicy,
     SessionRecord,
     build_context_snapshot,
+    build_conversation_compression,
     build_file_change_snapshot,
     build_recovery_summary,
     build_tool_call_snapshot,
     build_turn_checkpoint,
+    conversation_compression_to_dict,
     create_session_id,
     validate_session_id,
 )
@@ -63,6 +66,7 @@ def run_agent_loop(
     max_recovery_summary_chars=DEFAULT_MAX_RECOVERY_SUMMARY_CHARS,
     model_retry_policy=None,
     tool_retry_policy=None,
+    compression_policy=None,
 ):
     conversation, session_record = _load_session_conversation(
         conversation=conversation,
@@ -81,6 +85,7 @@ def run_agent_loop(
         max_attempts=1,
         retry_tool_errors=False,
     )
+    compression_policy = compression_policy or CompressionPolicy()
     error_fn = error_fn or _write_error
 
     output_fn("Mini CLI Assistant. Type"
@@ -115,13 +120,25 @@ def run_agent_loop(
 
             for _ in range(max_rounds):
                 context = context_provider.build(user_input=user_input, conversation=conversation)
+                _refresh_conversation_compression(
+                    conversation=conversation,
+                    compression_policy=compression_policy,
+                )
                 turn_checkpoint = _save_checkpoint_update(
                     checkpoint_store=checkpoint_store,
                     checkpoint=turn_checkpoint,
                     context_snapshot=build_context_snapshot(context),
-                    metadata_updates={"stage": "context_built"},
+                    metadata_updates={
+                        "stage": "context_built",
+                        **_compression_checkpoint_metadata(conversation.compression_summary),
+                    },
                 )
-                messages = build_model_messages(conversation=conversation, context=context)
+                messages = build_model_messages(
+                    conversation=conversation,
+                    context=context,
+                    compression_summary=conversation.compression_summary,
+                    keep_recent_messages=compression_policy.keep_recent_messages,
+                )
                 model_result = call_with_retries(
                     lambda: model_runner.call(
                         messages=messages,
@@ -198,10 +215,18 @@ def run_agent_loop(
                 latest_failure_report,
             )
             conversation.rollback(checkpoint)
+            _refresh_conversation_compression(
+                conversation=conversation,
+                compression_policy=compression_policy,
+            )
             turn_checkpoint = _save_checkpoint_update(
                 checkpoint_store=checkpoint_store,
                 checkpoint=turn_checkpoint,
-                metadata_updates={"stage": "rolled_back", "rolled_back": True},
+                metadata_updates={
+                    "stage": "rolled_back",
+                    "rolled_back": True,
+                    **_compression_checkpoint_metadata(conversation.compression_summary),
+                },
             )
             session_record = _save_session(
                 session_store=session_store,
@@ -213,6 +238,7 @@ def run_agent_loop(
                 summary_trigger_messages=summary_trigger_messages,
                 keep_recent_messages=keep_recent_messages,
                 max_recovery_summary_chars=max_recovery_summary_chars,
+                compression_policy=compression_policy,
             )
             error_fn(f"Error: {exc}")
             continue
@@ -227,6 +253,7 @@ def run_agent_loop(
             summary_trigger_messages=summary_trigger_messages,
             keep_recent_messages=keep_recent_messages,
             max_recovery_summary_chars=max_recovery_summary_chars,
+            compression_policy=compression_policy,
         )
         output_fn(f"\nAssistant> {assistant_reply}")
 
@@ -333,10 +360,12 @@ def _load_session_conversation(conversation, session_store, session_id):
         restored = Conversation.from_messages(
             record.messages,
             recovery_summary=record.recovery_summary,
+            compression_summary=record.compression_summary,
         )
         if conversation is not None:
             conversation.messages = restored.to_messages()
             conversation.recovery_summary = record.recovery_summary
+            conversation.compression_summary = record.compression_summary
             restored = conversation
         return restored, record
 
@@ -348,6 +377,7 @@ def _load_session_conversation(conversation, session_store, session_id):
         updated_at=created_at,
         metadata={},
         recovery_summary=None,
+        compression_summary=None,
     )
     return conversation or Conversation(), record
 
@@ -363,6 +393,7 @@ def _save_session(
     summary_trigger_messages,
     keep_recent_messages,
     max_recovery_summary_chars,
+    compression_policy,
 ):
     if session_store is None or session_record is None:
         return session_record
@@ -374,6 +405,10 @@ def _save_session(
         max_recovery_summary_chars=max_recovery_summary_chars,
     )
     conversation.recovery_summary = recovery_summary
+    _refresh_conversation_compression(
+        conversation=conversation,
+        compression_policy=compression_policy,
+    )
     metadata = dict(session_record.metadata)
     if checkpoint is not None:
         metadata["latest_checkpoint_id"] = checkpoint.checkpoint_id
@@ -388,6 +423,7 @@ def _save_session(
         updated_at=_utc_now(),
         metadata=metadata,
         recovery_summary=recovery_summary,
+        compression_summary=conversation.compression_summary,
     )
     session_store.save(record)
     return record
@@ -458,6 +494,30 @@ def _build_recovery_summary_dict(
     }
 
 
+def _refresh_conversation_compression(*, conversation, compression_policy):
+    compression = build_conversation_compression(
+        conversation.to_messages(),
+        recovery_summary=conversation.recovery_summary,
+        policy=compression_policy,
+    )
+    conversation.compression_summary = (
+        conversation_compression_to_dict(compression)
+        if compression is not None
+        else None
+    )
+    return conversation.compression_summary
+
+
+def _compression_checkpoint_metadata(compression_summary):
+    if not compression_summary:
+        return {"compression_summary_present": False}
+    return {
+        "compression_summary_present": True,
+        "compression_source_range": compression_summary.get("source_range") or {},
+        "compression_summary_chars": len(str(compression_summary.get("summary") or "")),
+    }
+
+
 def _resolve_checkpoint_store(session_store, checkpoint_store):
     if checkpoint_store is not None:
         return checkpoint_store
@@ -487,6 +547,7 @@ def _create_turn_checkpoint(
             "stage": "pre_turn",
             "user_input_preview": _preview_text(user_input),
             "rolled_back": False,
+            **_compression_checkpoint_metadata(conversation.compression_summary),
         },
     )
     checkpoint_store.save(checkpoint)

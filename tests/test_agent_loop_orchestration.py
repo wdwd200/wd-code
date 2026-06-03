@@ -7,7 +7,7 @@ from tests.fakes import FakeModelClient, run_agent_loop_with_inputs
 from wdcode.core.conversation import Conversation
 from wdcode.core.failure_recovery import RetryPolicy
 from wdcode.context.provider import ContextBundle
-from wdcode.session import CheckpointStore, SessionStore
+from wdcode.session import CheckpointStore, CompressionPolicy, SessionStore
 from wdcode.tools import create_default_registry
 from wdcode.tools.base import Tool
 from wdcode.tools.registry import ToolRegistry
@@ -52,6 +52,18 @@ class RaisingOnceClient:
         if len(self.calls) == 1:
             raise self.exc
         return self.response
+
+
+def make_long_conversation(turn_count=5):
+    conversation = Conversation()
+    for index in range(turn_count):
+        conversation.add_user_message(
+            f"old request {index} editing src/wdcode/core/agent_loop.py"
+        )
+        conversation.add_assistant_message(
+            f"old answer {index} covered tests/test_agent_loop_orchestration.py"
+        )
+    return conversation
 
 
 @contextmanager
@@ -704,3 +716,141 @@ def test_run_agent_loop_saves_recovery_summary_after_rollback_for_long_conversat
     assert record.messages == conversation.to_messages()
     assert record.recovery_summary is not None
     assert "request that rolls back" not in record.recovery_summary["summary"]
+
+
+def test_run_agent_loop_compresses_long_conversation_before_model_call():
+    with temp_session_dir() as session_dir:
+        store = SessionStore(session_dir)
+        conversation = make_long_conversation(turn_count=5)
+        full_message_count_before_turn = len(conversation.to_messages())
+        client = FakeModelClient([{"role": "assistant", "content": "compressed"}])
+
+        outputs, errors = run_agent_loop_with_inputs(
+            client,
+            ["new request"],
+            conversation=conversation,
+            tool_registry=None,
+            context_provider=SnapshotContextProvider(),
+            session_store=store,
+            session_id="session-compression",
+            compression_policy=CompressionPolicy(
+                trigger_message_count=6,
+                keep_recent_messages=4,
+            ),
+        )
+
+        record = store.load("session-compression")
+
+    model_messages = client.calls[0]["messages"]
+    model_contents = [message.get("content") for message in model_messages]
+
+    assert errors == []
+    assert "\nAssistant> compressed" in outputs
+    assert record is not None
+    assert record.compression_summary is not None
+    assert record.compression_summary["summary"].startswith("# Compressed Conversation History")
+    assert record.messages == conversation.to_messages()
+    assert len(record.messages) == full_message_count_before_turn + 2
+    assert model_messages[0]["role"] == "system"
+    assert model_messages[1]["role"] == "system"
+    assert model_messages[1]["content"].startswith("# Compressed Conversation History")
+    assert {"role": "system", "content": "# Project Context\n\nSnapshot context"} in model_messages
+    assert any(content == "new request" for content in model_contents)
+    assert not any(content == "old request 0 editing src/wdcode/core/agent_loop.py" for content in model_contents)
+    assert len([message for message in model_messages if message["role"] in {"user", "assistant"}]) == 4
+
+
+def test_run_agent_loop_compression_works_without_session_store():
+    conversation = make_long_conversation(turn_count=4)
+    client = FakeModelClient([{"role": "assistant", "content": "compressed"}])
+
+    outputs, errors = run_agent_loop_with_inputs(
+        client,
+        ["new request"],
+        conversation=conversation,
+        tool_registry=None,
+        context_provider=SnapshotContextProvider(),
+        compression_policy=CompressionPolicy(
+            trigger_message_count=5,
+            keep_recent_messages=3,
+        ),
+    )
+
+    model_messages = client.calls[0]["messages"]
+
+    assert errors == []
+    assert "\nAssistant> compressed" in outputs
+    assert conversation.compression_summary is not None
+    assert model_messages[1]["content"].startswith("# Compressed Conversation History")
+    assert len([message for message in model_messages if message["role"] in {"user", "assistant"}]) == 3
+
+
+def test_run_agent_loop_saves_rollback_state_compression_summary():
+    with temp_session_dir() as session_dir:
+        store = SessionStore(session_dir)
+        conversation = make_long_conversation(turn_count=5)
+        client = FakeModelClient(
+            [
+                {
+                    "role": "assistant",
+                    "content": None,
+                    "tool_calls": [make_tool_call(call_id="call_requires_tools")],
+                }
+            ]
+        )
+
+        outputs, errors = run_agent_loop_with_inputs(
+            client,
+            ["request that rolls back"],
+            conversation=conversation,
+            tool_registry=None,
+            context_provider=SnapshotContextProvider(),
+            session_store=store,
+            session_id="session-compression-rollback",
+            compression_policy=CompressionPolicy(
+                trigger_message_count=6,
+                keep_recent_messages=4,
+            ),
+        )
+
+        checkpoint = CheckpointStore(session_dir / "checkpoints").latest_for_session(
+            "session-compression-rollback"
+        )
+        record = store.load("session-compression-rollback")
+
+    assert "Error: Model requested tools, but no tool registry is available." in errors
+    assert not any(output.startswith("\nAssistant>") for output in outputs)
+    assert record is not None
+    assert record.messages == conversation.to_messages()
+    assert "request that rolls back" not in json.dumps(record.messages)
+    assert record.compression_summary is not None
+    assert checkpoint is not None
+    assert checkpoint.metadata["rolled_back"] is True
+    assert checkpoint.metadata["compression_summary_present"] is True
+
+
+def test_run_agent_loop_compression_does_not_break_model_retry():
+    conversation = make_long_conversation(turn_count=4)
+    client = RaisingOnceClient(
+        TimeoutError("temporary model timeout"),
+        {"role": "assistant", "content": "recovered"},
+    )
+
+    outputs, errors = run_agent_loop_with_inputs(
+        client,
+        ["new request"],
+        conversation=conversation,
+        tool_registry=None,
+        context_provider=SnapshotContextProvider(),
+        model_retry_policy=RetryPolicy(max_attempts=2),
+        compression_policy=CompressionPolicy(
+            trigger_message_count=5,
+            keep_recent_messages=3,
+        ),
+    )
+
+    assert errors == []
+    assert "\nAssistant> recovered" in outputs
+    assert len(client.calls) == 2
+    assert client.calls[0]["messages"][1]["content"].startswith("# Compressed Conversation History")
+    assert client.calls[1]["messages"][1]["content"].startswith("# Compressed Conversation History")
