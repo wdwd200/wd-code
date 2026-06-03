@@ -1,5 +1,6 @@
 import json
 import sys
+from dataclasses import replace
 from datetime import datetime, timezone
 
 from wdcode.cli.commands import is_exit_command
@@ -8,7 +9,17 @@ from wdcode.core.conversation import Conversation
 from wdcode.core.message_builder import build_model_messages
 from wdcode.core.model_runner import ModelRunner
 from wdcode.core.response_router import route_assistant_message
-from wdcode.session import SessionRecord, build_recovery_summary, create_session_id, validate_session_id
+from wdcode.session import (
+    CheckpointStore,
+    SessionRecord,
+    build_context_snapshot,
+    build_file_change_snapshot,
+    build_recovery_summary,
+    build_tool_call_snapshot,
+    build_turn_checkpoint,
+    create_session_id,
+    validate_session_id,
+)
 from wdcode.tools.gateway import ToolGateway
 
 
@@ -18,6 +29,7 @@ MAX_TOOL_CALLS_PER_REQUEST = 12
 DEFAULT_SUMMARY_TRIGGER_MESSAGES = 30
 DEFAULT_RECOVERY_KEEP_RECENT_MESSAGES = 12
 DEFAULT_MAX_RECOVERY_SUMMARY_CHARS = 4000
+_MISSING = object()
 
 
 def run_agent_loop(
@@ -34,6 +46,7 @@ def run_agent_loop(
     context_provider=None,
     session_store=None,
     session_id=None,
+    checkpoint_store=None,
     summary_trigger_messages=DEFAULT_SUMMARY_TRIGGER_MESSAGES,
     keep_recent_messages=DEFAULT_RECOVERY_KEEP_RECENT_MESSAGES,
     max_recovery_summary_chars=DEFAULT_MAX_RECOVERY_SUMMARY_CHARS,
@@ -43,8 +56,10 @@ def run_agent_loop(
         session_store=session_store,
         session_id=session_id,
     )
+    checkpoint_store = _resolve_checkpoint_store(session_store, checkpoint_store)
+    project_root = getattr(tool_registry, "project_root", None)
     context_provider = context_provider or ContextProvider(
-        project_root=getattr(tool_registry, "project_root", None)
+        project_root=project_root
     )
     model_runner = ModelRunner(client)
     tool_gateway = ToolGateway(tool_registry, approval_mode=approval_mode) if tool_registry else None
@@ -66,6 +81,13 @@ def run_agent_loop(
             return
 
         checkpoint = conversation.checkpoint()
+        turn_checkpoint = _create_turn_checkpoint(
+            checkpoint_store=checkpoint_store,
+            session_record=session_record,
+            conversation=conversation,
+            user_input=user_input,
+            project_root=project_root,
+        )
         conversation.add_user_message(user_input)
 
         try:
@@ -74,6 +96,12 @@ def run_agent_loop(
 
             for _ in range(max_rounds):
                 context = context_provider.build(user_input=user_input, conversation=conversation)
+                turn_checkpoint = _save_checkpoint_update(
+                    checkpoint_store=checkpoint_store,
+                    checkpoint=turn_checkpoint,
+                    context_snapshot=build_context_snapshot(context),
+                    metadata_updates={"stage": "context_built"},
+                )
                 messages = build_model_messages(conversation=conversation, context=context)
                 assistant_message = model_runner.call(
                     messages=messages,
@@ -93,6 +121,12 @@ def run_agent_loop(
                 if len(route.tool_calls) > MAX_TOOL_CALLS_PER_ROUND:
                     raise RuntimeError("Too many tool calls in one model response.")
 
+                turn_checkpoint = _save_checkpoint_update(
+                    checkpoint_store=checkpoint_store,
+                    checkpoint=turn_checkpoint,
+                    tool_call_snapshot=build_tool_call_snapshot(route.tool_calls),
+                    metadata_updates={"stage": "tool_calls_observed"},
+                )
                 conversation.add_assistant_tool_call_message(route.raw_message)
                 for tool_call in route.tool_calls:
                     _trace_tool_call(trace_writer, tool_call)
@@ -114,10 +148,17 @@ def run_agent_loop(
                 _write_trace(trace_writer, "tool_loop_stopped", {"reason": assistant_reply})
         except RuntimeError as exc:
             conversation.rollback(checkpoint)
+            turn_checkpoint = _save_checkpoint_update(
+                checkpoint_store=checkpoint_store,
+                checkpoint=turn_checkpoint,
+                metadata_updates={"stage": "rolled_back", "rolled_back": True},
+            )
             session_record = _save_session(
                 session_store=session_store,
                 session_record=session_record,
                 conversation=conversation,
+                checkpoint=turn_checkpoint,
+                rolled_back=True,
                 summary_trigger_messages=summary_trigger_messages,
                 keep_recent_messages=keep_recent_messages,
                 max_recovery_summary_chars=max_recovery_summary_chars,
@@ -129,6 +170,8 @@ def run_agent_loop(
             session_store=session_store,
             session_record=session_record,
             conversation=conversation,
+            checkpoint=turn_checkpoint,
+            rolled_back=False,
             summary_trigger_messages=summary_trigger_messages,
             keep_recent_messages=keep_recent_messages,
             max_recovery_summary_chars=max_recovery_summary_chars,
@@ -238,6 +281,8 @@ def _save_session(
     session_record,
     conversation,
     *,
+    checkpoint,
+    rolled_back,
     summary_trigger_messages,
     keep_recent_messages,
     max_recovery_summary_chars,
@@ -252,12 +297,17 @@ def _save_session(
         max_recovery_summary_chars=max_recovery_summary_chars,
     )
     conversation.recovery_summary = recovery_summary
+    metadata = dict(session_record.metadata)
+    if checkpoint is not None:
+        metadata["latest_checkpoint_id"] = checkpoint.checkpoint_id
+        if rolled_back:
+            metadata["rollback_checkpoint_id"] = checkpoint.checkpoint_id
     record = SessionRecord(
         session_id=session_record.session_id,
         messages=conversation.to_messages(),
         created_at=session_record.created_at,
         updated_at=_utc_now(),
-        metadata=session_record.metadata,
+        metadata=metadata,
         recovery_summary=recovery_summary,
     )
     session_store.save(record)
@@ -288,6 +338,83 @@ def _build_recovery_summary_dict(
         "recent_message_count": summary.recent_message_count,
         "metadata": summary.metadata,
     }
+
+
+def _resolve_checkpoint_store(session_store, checkpoint_store):
+    if checkpoint_store is not None:
+        return checkpoint_store
+    if session_store is None:
+        return None
+    return CheckpointStore(session_store.root / "checkpoints")
+
+
+def _create_turn_checkpoint(
+    *,
+    checkpoint_store,
+    session_record,
+    conversation,
+    user_input,
+    project_root,
+):
+    if checkpoint_store is None or session_record is None:
+        return None
+
+    checkpoint = build_turn_checkpoint(
+        session_id=session_record.session_id,
+        turn_index=_next_turn_index(conversation),
+        messages=conversation.to_messages(),
+        recovery_summary=conversation.recovery_summary,
+        file_change_snapshot=build_file_change_snapshot(project_root),
+        metadata={
+            "stage": "pre_turn",
+            "user_input_preview": _preview_text(user_input),
+            "rolled_back": False,
+        },
+    )
+    checkpoint_store.save(checkpoint)
+    return checkpoint
+
+
+def _save_checkpoint_update(
+    *,
+    checkpoint_store,
+    checkpoint,
+    context_snapshot=_MISSING,
+    tool_call_snapshot=_MISSING,
+    metadata_updates=None,
+):
+    if checkpoint_store is None or checkpoint is None:
+        return checkpoint
+
+    metadata = dict(checkpoint.metadata)
+    metadata.update(metadata_updates or {})
+    updated = replace(
+        checkpoint,
+        context_snapshot=(
+            checkpoint.context_snapshot
+            if context_snapshot is _MISSING
+            else context_snapshot
+        ),
+        tool_call_snapshot=(
+            checkpoint.tool_call_snapshot
+            if tool_call_snapshot is _MISSING
+            else tool_call_snapshot
+        ),
+        metadata=metadata,
+    )
+    checkpoint_store.save(updated)
+    return updated
+
+
+def _next_turn_index(conversation):
+    return sum(1 for message in conversation.as_messages() if message.get("role") == "user") + 1
+
+
+def _preview_text(text, *, max_chars=500):
+    compacted = " ".join(str(text).split())
+    if len(compacted) <= max_chars:
+        return compacted
+    return compacted[:max_chars].rstrip()
 
 
 def _utc_now():
