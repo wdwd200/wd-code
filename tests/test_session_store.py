@@ -165,3 +165,26 @@ def test_session_store_loads_old_session_without_recovery_summary():
 
     assert loaded is not None
     assert loaded.recovery_summary is None
+
+
+def test_session_store_loads_old_session_without_metadata():
+    with temp_session_dir() as session_dir:
+        payload = {
+            "version": 1,
+            "session_id": "old-no-metadata",
+            "created_at": "2026-06-02T10:00:00+00:00",
+            "updated_at": "2026-06-02T10:01:00+00:00",
+            "messages": [{"role": "system", "content": "system"}],
+            "recovery_summary": make_recovery_summary(),
+        }
+        (session_dir / "old-no-metadata.json").write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        store = SessionStore(session_dir)
+
+        loaded = store.load("old-no-metadata")
+
+    assert loaded is not None
+    assert loaded.metadata == {}
+    assert loaded.recovery_summary == make_recovery_summary()

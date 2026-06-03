@@ -5,9 +5,12 @@ from tempfile import TemporaryDirectory
 
 from tests.fakes import FakeModelClient, run_agent_loop_with_inputs
 from wdcode.core.conversation import Conversation
+from wdcode.core.failure_recovery import RetryPolicy
 from wdcode.context.provider import ContextBundle
 from wdcode.session import CheckpointStore, SessionStore
 from wdcode.tools import create_default_registry
+from wdcode.tools.base import Tool
+from wdcode.tools.registry import ToolRegistry
 
 
 def make_tool_call(name="list_files", arguments=None, call_id="call_1"):
@@ -36,6 +39,19 @@ class SnapshotContextProvider:
             text="# Project Context\n\nSnapshot context",
             metadata={"source": "test"},
         )
+
+
+class RaisingOnceClient:
+    def __init__(self, exc, response):
+        self.exc = exc
+        self.response = response
+        self.calls = []
+
+    def chat(self, messages, tools=None):
+        self.calls.append({"messages": list(messages), "tools": tools})
+        if len(self.calls) == 1:
+            raise self.exc
+        return self.response
 
 
 @contextmanager
@@ -206,6 +222,122 @@ def test_run_agent_loop_saves_checkpoint_for_successful_session_turn():
     assert "rollback_checkpoint_id" not in record.metadata
 
 
+def test_run_agent_loop_retries_model_timeout_then_completes_turn():
+    conversation = Conversation()
+    client = RaisingOnceClient(
+        TimeoutError("temporary model timeout"),
+        {"role": "assistant", "content": "recovered"},
+    )
+
+    outputs, errors = run_agent_loop_with_inputs(
+        client,
+        ["hello"],
+        conversation=conversation,
+        tool_registry=None,
+        model_retry_policy=RetryPolicy(max_attempts=2),
+    )
+
+    assert errors == []
+    assert "\nAssistant> recovered" in outputs
+    assert len(client.calls) == 2
+    assert conversation.messages[-1] == {"role": "assistant", "content": "recovered"}
+
+
+def test_run_agent_loop_records_successful_retry_report_in_session_metadata():
+    with temp_session_dir() as session_dir:
+        store = SessionStore(session_dir)
+        client = RaisingOnceClient(
+            TimeoutError("temporary model timeout"),
+            {"role": "assistant", "content": "recovered"},
+        )
+
+        outputs, errors = run_agent_loop_with_inputs(
+            client,
+            ["hello"],
+            tool_registry=None,
+            session_store=store,
+            session_id="session-retry-success",
+            model_retry_policy=RetryPolicy(max_attempts=2),
+        )
+
+        record = store.load("session-retry-success")
+
+    assert errors == []
+    assert "\nAssistant> recovered" in outputs
+    assert record is not None
+    assert record.metadata["latest_failure_component"] == "model"
+    assert record.metadata["latest_failure_category"] == "timeout"
+    assert record.metadata["latest_failure_attempts"] == 1
+    assert record.metadata["latest_failure_report"]["final_status"] == "success"
+
+
+def test_run_agent_loop_rolls_back_and_records_model_final_failure_report():
+    with temp_session_dir() as session_dir:
+        store = SessionStore(session_dir)
+        conversation = Conversation()
+        client = FakeModelClient([])
+
+        outputs, errors = run_agent_loop_with_inputs(
+            client,
+            ["hello"],
+            conversation=conversation,
+            tool_registry=None,
+            context_provider=SnapshotContextProvider(),
+            session_store=store,
+            session_id="session-model-failure",
+            model_retry_policy=RetryPolicy(max_attempts=2),
+        )
+
+        checkpoint = CheckpointStore(session_dir / "checkpoints").latest_for_session(
+            "session-model-failure"
+        )
+        record = store.load("session-model-failure")
+
+    assert "Error: FakeModelClient has no responses left" in errors
+    assert not any(output.startswith("\nAssistant>") for output in outputs)
+    assert conversation.messages == [
+        {"role": "system", "content": "You are a concise CLI programming assistant."}
+    ]
+    assert checkpoint is not None
+    assert checkpoint.metadata["rolled_back"] is True
+    assert record.metadata["rollback_checkpoint_id"] == checkpoint.checkpoint_id
+    assert record.metadata["latest_failure_component"] == "model"
+    assert record.metadata["latest_failure_report"]["final_status"] == "failed"
+    assert "Traceback" not in json.dumps(record.metadata["latest_failure_report"])
+
+
+def test_run_agent_loop_final_runtime_failure_keeps_prior_retry_events():
+    with temp_session_dir() as session_dir:
+        store = SessionStore(session_dir)
+        client = RaisingOnceClient(
+            TimeoutError("temporary model timeout"),
+            {
+                "role": "assistant",
+                "content": None,
+                "tool_calls": [make_tool_call(call_id="call_requires_tools")],
+            },
+        )
+
+        outputs, errors = run_agent_loop_with_inputs(
+            client,
+            ["needs unavailable tool"],
+            tool_registry=None,
+            session_store=store,
+            session_id="session-retry-then-runtime-failure",
+            model_retry_policy=RetryPolicy(max_attempts=2),
+        )
+
+        record = store.load("session-retry-then-runtime-failure")
+
+    assert "Error: Model requested tools, but no tool registry is available." in errors
+    assert not any(output.startswith("\nAssistant>") for output in outputs)
+    assert record is not None
+    report = record.metadata["latest_failure_report"]
+    assert report["final_status"] == "failed"
+    assert [event["component"] for event in report["events"]] == ["model", "runtime"]
+    assert record.metadata["latest_failure_component"] == "runtime"
+
+
 def test_run_agent_loop_checkpoint_captures_tool_call_snapshot_before_execution():
     project_root = Path(__file__).resolve().parents[1]
     with temp_session_dir() as session_dir:
@@ -246,6 +378,101 @@ def test_run_agent_loop_checkpoint_captures_tool_call_snapshot_before_execution(
         }
     ]
     assert checkpoint.metadata["stage"] == "context_built"
+
+
+def test_run_agent_loop_default_tool_policy_does_not_retry_execution_failure():
+    project_root = Path(__file__).resolve().parents[1]
+    registry = ToolRegistry(project_root)
+    attempts = []
+
+    def failing_tool(arguments):
+        attempts.append(arguments)
+        raise RuntimeError("tool failed")
+
+    registry.register(
+        Tool(
+            name="list_files",
+            description="Failing tool.",
+            parameters={"type": "object"},
+            execute=failing_tool,
+        )
+    )
+    conversation = Conversation()
+    client = FakeModelClient(
+        [
+            {
+                "role": "assistant",
+                "content": None,
+                "tool_calls": [make_tool_call(call_id="call_fails")],
+            },
+            {"role": "assistant", "content": "handled"},
+        ]
+    )
+
+    outputs, errors = run_agent_loop_with_inputs(
+        client,
+        ["call failing tool"],
+        conversation=conversation,
+        tool_registry=registry,
+    )
+
+    tool_message = next(message for message in conversation.messages if message["role"] == "tool")
+    tool_content = json.loads(tool_message["content"])
+
+    assert errors == []
+    assert "\nAssistant> handled" in outputs
+    assert len(attempts) == 1
+    assert tool_content["ok"] is False
+    assert "tool failed" in tool_content["error"]
+
+
+def test_run_agent_loop_explicit_tool_retry_retries_execution_failure():
+    project_root = Path(__file__).resolve().parents[1]
+    registry = ToolRegistry(project_root)
+    attempts = []
+
+    def flaky_tool(arguments):
+        attempts.append(arguments)
+        if len(attempts) == 1:
+            raise RuntimeError("temporary tool failure")
+        return {"status": "ok"}
+
+    registry.register(
+        Tool(
+            name="list_files",
+            description="Flaky tool.",
+            parameters={"type": "object"},
+            execute=flaky_tool,
+        )
+    )
+    conversation = Conversation()
+    client = FakeModelClient(
+        [
+            {
+                "role": "assistant",
+                "content": None,
+                "tool_calls": [make_tool_call(call_id="call_flaky")],
+            },
+            {"role": "assistant", "content": "handled"},
+        ]
+    )
+
+    outputs, errors = run_agent_loop_with_inputs(
+        client,
+        ["call flaky tool"],
+        conversation=conversation,
+        tool_registry=registry,
+        tool_retry_policy=RetryPolicy(max_attempts=2, retry_tool_errors=True),
+    )
+
+    tool_message = next(message for message in conversation.messages if message["role"] == "tool")
+    tool_content = json.loads(tool_message["content"])
+
+    assert errors == []
+    assert "\nAssistant> handled" in outputs
+    assert len(attempts) == 2
+    assert tool_content["ok"] is True
+    assert tool_content["data"] == {"status": "ok"}
 
 
 def test_run_agent_loop_records_rollback_checkpoint_id_in_session_metadata():

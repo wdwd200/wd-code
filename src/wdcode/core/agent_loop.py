@@ -6,6 +6,13 @@ from datetime import datetime, timezone
 from wdcode.cli.commands import is_exit_command
 from wdcode.context.provider import ContextProvider
 from wdcode.core.conversation import Conversation
+from wdcode.core.failure_recovery import (
+    FailureReport,
+    RetryPolicy,
+    call_with_retries,
+    classify_exception,
+    failure_report_to_dict,
+)
 from wdcode.core.message_builder import build_model_messages
 from wdcode.core.model_runner import ModelRunner
 from wdcode.core.response_router import route_assistant_message
@@ -32,6 +39,10 @@ DEFAULT_MAX_RECOVERY_SUMMARY_CHARS = 4000
 _MISSING = object()
 
 
+class _ToolExecutionFailure(RuntimeError):
+    pass
+
+
 def run_agent_loop(
     client,
     tool_registry=None,
@@ -50,6 +61,8 @@ def run_agent_loop(
     summary_trigger_messages=DEFAULT_SUMMARY_TRIGGER_MESSAGES,
     keep_recent_messages=DEFAULT_RECOVERY_KEEP_RECENT_MESSAGES,
     max_recovery_summary_chars=DEFAULT_MAX_RECOVERY_SUMMARY_CHARS,
+    model_retry_policy=None,
+    tool_retry_policy=None,
 ):
     conversation, session_record = _load_session_conversation(
         conversation=conversation,
@@ -63,6 +76,11 @@ def run_agent_loop(
     )
     model_runner = ModelRunner(client)
     tool_gateway = ToolGateway(tool_registry, approval_mode=approval_mode) if tool_registry else None
+    model_retry_policy = model_retry_policy or RetryPolicy(max_attempts=2)
+    tool_retry_policy = tool_retry_policy or RetryPolicy(
+        max_attempts=1,
+        retry_tool_errors=False,
+    )
     error_fn = error_fn or _write_error
 
     output_fn("Mini CLI Assistant. Type"
@@ -89,6 +107,7 @@ def run_agent_loop(
             project_root=project_root,
         )
         conversation.add_user_message(user_input)
+        latest_failure_report = None
 
         try:
             assistant_reply = None
@@ -103,9 +122,19 @@ def run_agent_loop(
                     metadata_updates={"stage": "context_built"},
                 )
                 messages = build_model_messages(conversation=conversation, context=context)
-                assistant_message = model_runner.call(
-                    messages=messages,
-                    tools=tool_gateway.schemas() if tool_gateway else None,
+                model_result = call_with_retries(
+                    lambda: model_runner.call(
+                        messages=messages,
+                        tools=tool_gateway.schemas() if tool_gateway else None,
+                    ),
+                    component="model",
+                    policy=model_retry_policy,
+                    metadata={"stage": "model_call"},
+                )
+                assistant_message = model_result.value
+                latest_failure_report = _latest_report_with_events(
+                    latest_failure_report,
+                    model_result.report,
                 )
                 route = route_assistant_message(assistant_message)
 
@@ -131,7 +160,24 @@ def run_agent_loop(
                 for tool_call in route.tool_calls:
                     _trace_tool_call(trace_writer, tool_call)
 
-                tool_results = tool_gateway.handle_many(route.tool_calls)
+                tool_result = call_with_retries(
+                    lambda: _handle_many_tools(
+                        tool_gateway=tool_gateway,
+                        tool_calls=route.tool_calls,
+                        retry_policy=tool_retry_policy,
+                    ),
+                    component="tool",
+                    policy=tool_retry_policy,
+                    metadata={
+                        "stage": "tool_call",
+                        "tool_count": len(route.tool_calls),
+                    },
+                )
+                tool_results = tool_result.value
+                latest_failure_report = _latest_report_with_events(
+                    latest_failure_report,
+                    tool_result.report,
+                )
                 _record_tool_results(
                     conversation=conversation,
                     tool_calls=route.tool_calls,
@@ -146,7 +192,11 @@ def run_agent_loop(
                 assistant_reply = "Tool loop stopped before the model returned a final answer."
                 conversation.add_assistant_message(assistant_reply)
                 _write_trace(trace_writer, "tool_loop_stopped", {"reason": assistant_reply})
-        except RuntimeError as exc:
+        except Exception as exc:
+            latest_failure_report = _failure_report_from_exception(
+                exc,
+                latest_failure_report,
+            )
             conversation.rollback(checkpoint)
             turn_checkpoint = _save_checkpoint_update(
                 checkpoint_store=checkpoint_store,
@@ -159,6 +209,7 @@ def run_agent_loop(
                 conversation=conversation,
                 checkpoint=turn_checkpoint,
                 rolled_back=True,
+                failure_report=latest_failure_report,
                 summary_trigger_messages=summary_trigger_messages,
                 keep_recent_messages=keep_recent_messages,
                 max_recovery_summary_chars=max_recovery_summary_chars,
@@ -172,6 +223,7 @@ def run_agent_loop(
             conversation=conversation,
             checkpoint=turn_checkpoint,
             rolled_back=False,
+            failure_report=latest_failure_report,
             summary_trigger_messages=summary_trigger_messages,
             keep_recent_messages=keep_recent_messages,
             max_recovery_summary_chars=max_recovery_summary_chars,
@@ -197,6 +249,30 @@ def _record_tool_results(conversation, tool_calls, tool_results, trace_writer=No
                 "result": tool_result_dict,
             },
         )
+
+
+def _handle_many_tools(*, tool_gateway, tool_calls, retry_policy):
+    tool_results = tool_gateway.handle_many(tool_calls)
+    if _should_raise_tool_result_failure(tool_results, retry_policy):
+        raise _ToolExecutionFailure(_tool_failure_message(tool_results))
+    return tool_results
+
+
+def _should_raise_tool_result_failure(tool_results, retry_policy):
+    if not retry_policy.retry_tool_errors or retry_policy.max_attempts <= 1:
+        return False
+    return any(
+        not result.ok and result.metadata.get("stage") == "execution"
+        for result in tool_results
+    )
+
+
+def _tool_failure_message(tool_results):
+    for result in tool_results:
+        if not result.ok and result.metadata.get("stage") == "execution":
+            tool_name = result.metadata.get("tool_name") or "unknown"
+            return f"Tool execution failed for {tool_name}: {result.error}"
+    return "Tool execution failed."
 
 
 def _trace_assistant_message(trace_writer, route):
@@ -283,6 +359,7 @@ def _save_session(
     *,
     checkpoint,
     rolled_back,
+    failure_report,
     summary_trigger_messages,
     keep_recent_messages,
     max_recovery_summary_chars,
@@ -302,6 +379,8 @@ def _save_session(
         metadata["latest_checkpoint_id"] = checkpoint.checkpoint_id
         if rolled_back:
             metadata["rollback_checkpoint_id"] = checkpoint.checkpoint_id
+    if failure_report is not None and failure_report.events:
+        _record_failure_metadata(metadata, failure_report, checkpoint=checkpoint)
     record = SessionRecord(
         session_id=session_record.session_id,
         messages=conversation.to_messages(),
@@ -312,6 +391,45 @@ def _save_session(
     )
     session_store.save(record)
     return record
+
+
+def _latest_report_with_events(current, candidate):
+    if candidate is not None and candidate.events:
+        return candidate
+    return current
+
+
+def _failure_report_from_exception(exc, current_report):
+    report = getattr(exc, "failure_report", None)
+    if isinstance(report, FailureReport):
+        return report
+
+    event = classify_exception(
+        exc,
+        component="runtime",
+        attempt=1,
+        max_attempts=1,
+        metadata={"stage": "agent_loop"},
+    )
+    existing_events = list(current_report.events) if current_report is not None else []
+    metadata = dict(current_report.metadata) if current_report is not None else {}
+    metadata["stage"] = "agent_loop"
+    return FailureReport(
+        events=existing_events + [event],
+        final_status="failed",
+        metadata=metadata,
+    )
+
+
+def _record_failure_metadata(metadata, failure_report, *, checkpoint):
+    last_event = failure_report.events[-1]
+    metadata["latest_failure_report"] = failure_report_to_dict(failure_report)
+    metadata["latest_failure_component"] = last_event.component
+    metadata["latest_failure_category"] = last_event.category
+    metadata["latest_failure_retryable"] = last_event.retryable
+    metadata["latest_failure_attempts"] = last_event.attempt
+    if checkpoint is not None:
+        metadata["latest_failure_checkpoint_id"] = checkpoint.checkpoint_id
 
 
 def _build_recovery_summary_dict(
