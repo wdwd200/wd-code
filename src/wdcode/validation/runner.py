@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Any
 
 from wdcode.security.command_policy import check_command_allowed
+from wdcode.validation.discovery import CLI_ASSISTANT_HELP_COMMAND, PACKAGE_CLI_HELP_COMMAND
 
 
 DEFAULT_VALIDATION_COMMANDS = ["python -m pytest"]
@@ -66,10 +67,14 @@ def _run_validation_command(project_root: Path, command: str, timeout: int) -> V
 
         decision = check_command_allowed(command)
         if not decision.allowed:
-            return _failure(command, elapsed_ms(start), decision.reason)
+            validation_argv = _validation_command_argv(command)
+            if validation_argv is None:
+                return _failure(command, elapsed_ms(start), decision.reason)
+        else:
+            validation_argv = tuple(decision.argv)
 
         completed = subprocess.run(
-            list(decision.argv),
+            list(validation_argv),
             cwd=str(project_root),
             capture_output=True,
             text=True,
@@ -124,6 +129,14 @@ def _normalize_output(output):
     if isinstance(output, bytes):
         return output.decode("utf-8", errors="replace")
     return str(output)
+
+
+def _validation_command_argv(command: str) -> tuple[str, ...] | None:
+    if command == CLI_ASSISTANT_HELP_COMMAND:
+        return ("python", "src/cli_assistant.py", "--help")
+    if command == PACKAGE_CLI_HELP_COMMAND:
+        return ("python", "src/wdcode/cli/main.py", "--help")
+    return None
 
 
 def _write_trace(trace_writer, event_type, payload):

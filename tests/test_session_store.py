@@ -61,6 +61,23 @@ def make_compression_summary():
     }
 
 
+def make_validation_metadata():
+    return {
+        "latest_validation_ok": True,
+        "latest_validation_status": "passed",
+        "latest_validation_attempts": 1,
+        "latest_validation_commands": ["python -m pytest"],
+        "latest_validation_report": {
+            "ok": True,
+            "attempts": 1,
+            "validation_reports": [{"ok": True, "results": []}],
+            "repair_requests": [],
+            "final_status": "passed",
+            "metadata": {"commands": ["python -m pytest"]},
+        },
+    }
+
+
 def test_create_session_id_generates_valid_file_name_id():
     session_id = create_session_id()
 
@@ -177,6 +194,35 @@ def test_session_store_save_and_load_preserves_compression_summary():
 
     assert loaded is not None
     assert loaded.metadata == {"project": "wd-code"}
+    assert loaded.recovery_summary == make_recovery_summary()
+    assert loaded.compression_summary == make_compression_summary()
+
+
+def test_session_store_save_and_load_preserves_validation_metadata():
+    with temp_session_dir() as session_dir:
+        store = SessionStore(session_dir)
+        record = make_record("validation-session")
+        record = SessionRecord(
+            session_id=record.session_id,
+            messages=record.messages,
+            created_at=record.created_at,
+            updated_at=record.updated_at,
+            metadata={
+                **record.metadata,
+                **make_validation_metadata(),
+            },
+            recovery_summary=make_recovery_summary(),
+            compression_summary=make_compression_summary(),
+        )
+
+        store.save(record)
+        loaded = store.load("validation-session")
+
+    assert loaded is not None
+    assert loaded.metadata["project"] == "wd-code"
+    assert loaded.metadata["latest_validation_ok"] is True
+    assert loaded.metadata["latest_validation_status"] == "passed"
+    assert loaded.metadata["latest_validation_commands"] == ["python -m pytest"]
     assert loaded.recovery_summary == make_recovery_summary()
     assert loaded.compression_summary == make_compression_summary()
 

@@ -11,6 +11,7 @@ from wdcode.session import CheckpointStore, CompressionPolicy, SessionStore
 from wdcode.tools import create_default_registry
 from wdcode.tools.base import Tool
 from wdcode.tools.registry import ToolRegistry
+from wdcode.validation.loop import ValidationLoopReport
 
 
 def make_tool_call(name="list_files", arguments=None, call_id="call_1"):
@@ -64,6 +65,20 @@ def make_long_conversation(turn_count=5):
             f"old answer {index} covered tests/test_agent_loop_orchestration.py"
         )
     return conversation
+
+
+def make_validation_loop_report(ok=True, final_status="passed"):
+    return ValidationLoopReport(
+        ok=ok,
+        attempts=1,
+        validation_reports=[{"ok": ok, "results": []}],
+        repair_requests=[],
+        final_status=final_status,
+        metadata={
+            "commands": ["python -m pytest tests/test_imports.py"],
+            "plan_source": "explicit",
+        },
+    )
 
 
 @contextmanager
@@ -195,6 +210,125 @@ def test_run_agent_loop_saves_session_after_successful_user_turn():
     assert record.messages == conversation.to_messages()
     assert [message["role"] for message in record.messages] == ["system", "user", "assistant"]
     assert record.recovery_summary is None
+
+
+def test_run_agent_loop_does_not_run_validation_by_default(monkeypatch):
+    project_root = Path(__file__).resolve().parents[1]
+    client = FakeModelClient([{"role": "assistant", "content": "done"}])
+
+    def fail_if_called(**_kwargs):
+        raise AssertionError("validation loop should not run by default")
+
+    monkeypatch.setattr("wdcode.core.agent_loop.run_validation_loop", fail_if_called)
+
+    outputs, errors = run_agent_loop_with_inputs(
+        client,
+        ["hello"],
+        tool_registry=create_default_registry(project_root),
+    )
+
+    assert errors == []
+    assert "\nAssistant> done" in outputs
+
+
+def test_run_agent_loop_records_successful_validation_metadata(monkeypatch):
+    project_root = Path(__file__).resolve().parents[1]
+    calls = []
+
+    def fake_run_validation_loop(**kwargs):
+        calls.append(kwargs)
+        return make_validation_loop_report(ok=True, final_status="passed")
+
+    monkeypatch.setattr("wdcode.core.agent_loop.run_validation_loop", fake_run_validation_loop)
+
+    with temp_session_dir() as session_dir:
+        store = SessionStore(session_dir)
+        client = FakeModelClient([{"role": "assistant", "content": "validated"}])
+
+        outputs, errors = run_agent_loop_with_inputs(
+            client,
+            ["hello"],
+            tool_registry=create_default_registry(project_root),
+            session_store=store,
+            session_id="session-validation-success",
+            validate_after_turn=True,
+            validation_commands=["python -m pytest tests/test_imports.py"],
+        )
+
+        record = store.load("session-validation-success")
+
+    assert errors == []
+    assert "\nAssistant> validated" in outputs
+    assert len(calls) == 1
+    assert calls[0]["project_root"] == project_root
+    assert calls[0]["commands"] == ["python -m pytest tests/test_imports.py"]
+    assert record is not None
+    assert record.metadata["latest_validation_ok"] is True
+    assert record.metadata["latest_validation_status"] == "passed"
+    assert record.metadata["latest_validation_attempts"] == 1
+    assert record.metadata["latest_validation_commands"] == ["python -m pytest tests/test_imports.py"]
+
+
+def test_run_agent_loop_records_failed_validation_without_runtime_error(monkeypatch):
+    project_root = Path(__file__).resolve().parents[1]
+    conversation = Conversation()
+
+    def fake_run_validation_loop(**_kwargs):
+        return make_validation_loop_report(ok=False, final_status="failed")
+
+    monkeypatch.setattr("wdcode.core.agent_loop.run_validation_loop", fake_run_validation_loop)
+
+    with temp_session_dir() as session_dir:
+        store = SessionStore(session_dir)
+        client = FakeModelClient([{"role": "assistant", "content": "answer"}])
+
+        outputs, errors = run_agent_loop_with_inputs(
+            client,
+            ["hello"],
+            conversation=conversation,
+            tool_registry=create_default_registry(project_root),
+            session_store=store,
+            session_id="session-validation-failure",
+            validate_after_turn=True,
+            validation_commands=["python -m pytest tests/test_imports.py"],
+        )
+
+        record = store.load("session-validation-failure")
+
+    assert errors == []
+    assert "\nAssistant> answer" in outputs
+    assert conversation.messages == [
+        {"role": "system", "content": "You are a concise CLI programming assistant."},
+        {"role": "user", "content": "hello"},
+        {"role": "assistant", "content": "answer"},
+    ]
+    assert record is not None
+    assert record.metadata["latest_validation_ok"] is False
+    assert record.metadata["latest_validation_status"] == "failed"
+
+
+def test_run_agent_loop_validation_with_session_store_none_does_not_write_metadata(monkeypatch):
+    project_root = Path(__file__).resolve().parents[1]
+    calls = []
+
+    def fake_run_validation_loop(**kwargs):
+        calls.append(kwargs)
+        return make_validation_loop_report(ok=True, final_status="passed")
+
+    monkeypatch.setattr("wdcode.core.agent_loop.run_validation_loop", fake_run_validation_loop)
+
+    client = FakeModelClient([{"role": "assistant", "content": "done"}])
+    outputs, errors = run_agent_loop_with_inputs(
+        client,
+        ["hello"],
+        tool_registry=create_default_registry(project_root),
+        validate_after_turn=True,
+        validation_commands=["python -m pytest tests/test_imports.py"],
+    )
+
+    assert errors == []
+    assert "\nAssistant> done" in outputs
+    assert len(calls) == 1
 
 
 def test_run_agent_loop_saves_checkpoint_for_successful_session_turn():

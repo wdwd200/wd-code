@@ -5,6 +5,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 
 from wdcode.trace import TraceWriter
+from wdcode.validation.discovery import CLI_ASSISTANT_HELP_COMMAND, PACKAGE_CLI_HELP_COMMAND
 from wdcode.validation import run_validation
 
 
@@ -127,6 +128,29 @@ def test_validation_runner_multiple_commands_any_failure_makes_report_fail(monke
     assert report.ok is False
     assert [result.ok for result in report.results] == [True, False]
     assert [result.exit_code for result in report.results] == [0, 1]
+
+
+def test_validation_runner_allows_discovered_cli_help_commands(monkeypatch):
+    project_root = Path(__file__).resolve().parents[1]
+    calls = []
+
+    def fake_run(argv, **kwargs):
+        calls.append((argv, kwargs))
+        return CompletedProcessStub(returncode=0, stdout="usage:", stderr="")
+
+    monkeypatch.setattr("wdcode.validation.runner.subprocess.run", fake_run)
+
+    report = run_validation(
+        project_root,
+        commands=[CLI_ASSISTANT_HELP_COMMAND, PACKAGE_CLI_HELP_COMMAND],
+    )
+
+    assert report.ok is True
+    assert [call[0] for call in calls] == [
+        ["python", "src/cli_assistant.py", "--help"],
+        ["python", "src/wdcode/cli/main.py", "--help"],
+    ]
+    assert calls[0][1]["shell"] is False
 
 
 def test_validation_report_to_dict_is_json_serializable(monkeypatch):

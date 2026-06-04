@@ -31,6 +31,7 @@ from wdcode.session import (
     validate_session_id,
 )
 from wdcode.tools.gateway import ToolGateway
+from wdcode.validation import run_validation_loop, validation_loop_report_to_dict
 
 
 MAX_TOOL_ROUNDS = 5
@@ -67,6 +68,9 @@ def run_agent_loop(
     model_retry_policy=None,
     tool_retry_policy=None,
     compression_policy=None,
+    validate_after_turn=False,
+    validation_commands=None,
+    validation_policy=None,
 ):
     conversation, session_record = _load_session_conversation(
         conversation=conversation,
@@ -243,6 +247,13 @@ def run_agent_loop(
             error_fn(f"Error: {exc}")
             continue
 
+        latest_validation_report = _run_turn_validation(
+            validate_after_turn=validate_after_turn,
+            project_root=project_root,
+            validation_commands=validation_commands,
+            validation_policy=validation_policy,
+            trace_writer=trace_writer,
+        )
         session_record = _save_session(
             session_store=session_store,
             session_record=session_record,
@@ -250,6 +261,7 @@ def run_agent_loop(
             checkpoint=turn_checkpoint,
             rolled_back=False,
             failure_report=latest_failure_report,
+            validation_report=latest_validation_report,
             summary_trigger_messages=summary_trigger_messages,
             keep_recent_messages=keep_recent_messages,
             max_recovery_summary_chars=max_recovery_summary_chars,
@@ -394,6 +406,7 @@ def _save_session(
     keep_recent_messages,
     max_recovery_summary_chars,
     compression_policy,
+    validation_report=None,
 ):
     if session_store is None or session_record is None:
         return session_record
@@ -416,6 +429,8 @@ def _save_session(
             metadata["rollback_checkpoint_id"] = checkpoint.checkpoint_id
     if failure_report is not None and failure_report.events:
         _record_failure_metadata(metadata, failure_report, checkpoint=checkpoint)
+    if validation_report is not None:
+        _record_validation_metadata(metadata, validation_report)
     record = SessionRecord(
         session_id=session_record.session_id,
         messages=conversation.to_messages(),
@@ -427,6 +442,39 @@ def _save_session(
     )
     session_store.save(record)
     return record
+
+
+def _run_turn_validation(
+    *,
+    validate_after_turn,
+    project_root,
+    validation_commands,
+    validation_policy,
+    trace_writer,
+):
+    if not validate_after_turn or project_root is None:
+        return None
+    try:
+        report = run_validation_loop(
+            project_root=project_root,
+            commands=validation_commands,
+            policy=validation_policy,
+            trace_writer=trace_writer,
+        )
+        return validation_loop_report_to_dict(report)
+    except Exception as exc:
+        validation_report = {
+            "ok": False,
+            "attempts": 0,
+            "validation_reports": [],
+            "repair_requests": [],
+            "final_status": "failed",
+            "metadata": {
+                "error": _preview_text(str(exc)),
+            },
+        }
+        _write_trace(trace_writer, "validation_loop_finished", validation_report)
+        return validation_report
 
 
 def _latest_report_with_events(current, candidate):
@@ -466,6 +514,15 @@ def _record_failure_metadata(metadata, failure_report, *, checkpoint):
     metadata["latest_failure_attempts"] = last_event.attempt
     if checkpoint is not None:
         metadata["latest_failure_checkpoint_id"] = checkpoint.checkpoint_id
+
+
+def _record_validation_metadata(metadata, validation_report):
+    metadata["latest_validation_ok"] = bool(validation_report.get("ok"))
+    metadata["latest_validation_status"] = validation_report.get("final_status")
+    metadata["latest_validation_attempts"] = validation_report.get("attempts")
+    report_metadata = validation_report.get("metadata") or {}
+    metadata["latest_validation_commands"] = list(report_metadata.get("commands") or [])
+    metadata["latest_validation_report"] = validation_report
 
 
 def _build_recovery_summary_dict(
